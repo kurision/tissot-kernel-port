@@ -2179,6 +2179,25 @@ static ssize_t recomp_algorithm_store(struct device *dev,
 }
 #endif
 
+/*
+ * Streams have been per-CPU since 4.6 and the attr was removed upstream, but
+ * old Android init setups still write max_comp_streams= during zram setup and
+ * treat a missing node as a fatal error, which fails the whole swapon. Keep
+ * the node visible and accept the value.
+ */
+static ssize_t max_comp_streams_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%d\n", num_online_cpus());
+}
+
+static ssize_t max_comp_streams_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t len)
+{
+	return len;
+}
+
 static ssize_t compact_store(struct device *dev, struct device_attribute *attr,
 			     const char *buf, size_t len)
 {
@@ -3322,6 +3341,7 @@ static const struct block_device_operations zram_devops = {
 static DEVICE_ATTR_RO(io_stat);
 static DEVICE_ATTR_RO(mm_stat);
 static DEVICE_ATTR_RO(debug_stat);
+static DEVICE_ATTR_RW(max_comp_streams);
 static DEVICE_ATTR_WO(compact);
 static DEVICE_ATTR_RW(disksize);
 static DEVICE_ATTR_RO(initstate);
@@ -3353,6 +3373,7 @@ static struct attribute *zram_disk_attrs[] = {
 	&dev_attr_mem_limit.attr,
 	&dev_attr_mem_used_max.attr,
 	&dev_attr_idle.attr,
+	&dev_attr_max_comp_streams.attr,
 	&dev_attr_comp_algorithm.attr,
 #ifdef CONFIG_ZRAM_WRITEBACK
 	&dev_attr_bd_stat.attr,
