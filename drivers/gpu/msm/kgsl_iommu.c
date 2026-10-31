@@ -1110,9 +1110,11 @@ _alloc_pt(struct device *dev, struct kgsl_mmu *mmu, struct kgsl_pagetable *pt)
 		return ERR_PTR(-ENOMEM);
 
 	iommu_pt->domain = iommu_paging_domain_alloc(dev);
-	if (iommu_pt->domain == NULL) {
+	if (IS_ERR(iommu_pt->domain)) {
+		int ret = PTR_ERR(iommu_pt->domain);
+
 		kfree(iommu_pt);
-		return ERR_PTR(-ENODEV);
+		return ERR_PTR(ret);
 	}
 
 	pt->pt_ops = &iommu_pt_ops;
