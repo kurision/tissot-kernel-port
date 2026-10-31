@@ -73,22 +73,21 @@
 	/delete-node/ pm8953-thermal;
 
 	/*
-	 * The CPU passive trips are the only mitigation that demonstrably
-	 * engages on this port: thermal-engine runs but never clamps, so
-	 * raising these trips above its 75 C line left the CPU sensors
-	 * (which read 80-84 C at full load on the 2.78 GHz table) outside
-	 * every trip while the tripless L2 sensors ran to the critical
-	 * point. Keep the kernel trips at 80 C until thermal-engine's
-	 * mitigation interface is brought up.
+	 * The CPU passive trips sit above the ROM's thermal-engine line
+	 * (thermal-engine.conf mitigates from 75 C and releases at 65 C).
+	 * With the trips at 80 C both controllers drove the same cooling
+	 * device and the frequency limit oscillated between them. At 85 C
+	 * thermal-engine owns the normal range and the kernel cooling
+	 * device only backstops it.
 	 */
-	TISSOT_TSENS_ZONE(tsens_tz_sensor9, 9, cpu0_alert, cpu0_crit, 80000, 100000, CPU0);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor10, 10, cpu1_alert, cpu1_crit, 80000, 100000, CPU1);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor11, 11, cpu2_alert, cpu2_crit, 80000, 100000, CPU2);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor12, 12, cpu3_alert, cpu3_crit, 80000, 100000, CPU3);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor4, 4, cpu4_alert, cpu4_crit, 80000, 100000, CPU4);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor5, 5, cpu5_alert, cpu5_crit, 80000, 100000, CPU5);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor6, 6, cpu6_alert, cpu6_crit, 80000, 100000, CPU6);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor7, 7, cpu7_alert, cpu7_crit, 80000, 100000, CPU7);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor9, 9, cpu0_alert, cpu0_crit, 85000, 100000, CPU0);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor10, 10, cpu1_alert, cpu1_crit, 85000, 100000, CPU1);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor11, 11, cpu2_alert, cpu2_crit, 85000, 100000, CPU2);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor12, 12, cpu3_alert, cpu3_crit, 85000, 100000, CPU3);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor4, 4, cpu4_alert, cpu4_crit, 85000, 100000, CPU4);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor5, 5, cpu5_alert, cpu5_crit, 85000, 100000, CPU5);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor6, 6, cpu6_alert, cpu6_crit, 85000, 100000, CPU6);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor7, 7, cpu7_alert, cpu7_crit, 85000, 100000, CPU7);
 	TISSOT_TSENS_ZONE(tsens_tz_sensor15, 15, gpu_alert, gpu_crit, 70000, 90000, gpu);
 
 	/*
