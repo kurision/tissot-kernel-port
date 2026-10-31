@@ -412,8 +412,15 @@ static int ctrl_cmd_bye(struct sockaddr_qrtr *from)
 
 		ret = kernel_sendmsg(qrtr_ns.sock, &msg, &iv, 1, sizeof(pkt));
 		if (ret < 0 && ret != -ENODEV) {
-			pr_err("failed to send bye cmd\n");
-			goto delete_node;
+			/* A server that never reads its control socket
+			 * fills its receive queue (-ENOBUFS). Skip it
+			 * and keep notifying the rest; aborting here
+			 * leaves every later server with a stale record
+			 * of the departing node.
+			 */
+			pr_warn_ratelimited("failed to send bye cmd: %d\n",
+					    ret);
+			continue;
 		}
 	}
 
