@@ -12,11 +12,9 @@
  * sensors read nothing.
  *
  * The zones are recreated here under the ROM's names with the same
- * sensors, trip labels and cooling maps as msm8953.dtsi and pm8953.dtsi;
- * the shared SoC and PMIC files keep their names for the other boards.
- * The CPU passive trips sit at 85 C, above the ROM's thermal-engine
- * mitigation line, so the two controllers do not fight (see below). The
- * mapping is the one thermal-engine.conf documents:
+ * sensors, trips, trip labels and cooling maps as msm8953.dtsi and
+ * pm8953.dtsi; the shared SoC and PMIC files keep their names for the
+ * other boards. The mapping is the one thermal-engine.conf documents:
  *
  *   tsens_tz_sensor9..12  cpu0..cpu3     tsens_tz_sensor13  L2 cache 0
  *   tsens_tz_sensor4..7   cpu4..cpu7     tsens_tz_sensor8   L2 cache 1
@@ -72,41 +70,15 @@
 	/delete-node/ gpu-thermal;
 	/delete-node/ pm8953-thermal;
 
-	/*
-	 * The CPU passive trips sit above the ROM's thermal-engine line
-	 * (thermal-engine.conf mitigates from 75 C and releases at 65 C).
-	 * With the trips at 80 C both controllers drove the same cooling
-	 * device and the frequency limit oscillated between them. At 85 C
-	 * thermal-engine owns the normal range and the kernel cooling
-	 * device only backstops it.
-	 */
-	TISSOT_TSENS_ZONE(tsens_tz_sensor9, 9, cpu0_alert, cpu0_crit, 85000, 100000, CPU0);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor10, 10, cpu1_alert, cpu1_crit, 85000, 100000, CPU1);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor11, 11, cpu2_alert, cpu2_crit, 85000, 100000, CPU2);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor12, 12, cpu3_alert, cpu3_crit, 85000, 100000, CPU3);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor4, 4, cpu4_alert, cpu4_crit, 85000, 100000, CPU4);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor5, 5, cpu5_alert, cpu5_crit, 85000, 100000, CPU5);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor6, 6, cpu6_alert, cpu6_crit, 85000, 100000, CPU6);
-	TISSOT_TSENS_ZONE(tsens_tz_sensor7, 7, cpu7_alert, cpu7_crit, 85000, 100000, CPU7);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor9, 9, cpu0_alert, cpu0_crit, 80000, 100000, CPU0);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor10, 10, cpu1_alert, cpu1_crit, 80000, 100000, CPU1);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor11, 11, cpu2_alert, cpu2_crit, 80000, 100000, CPU2);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor12, 12, cpu3_alert, cpu3_crit, 80000, 100000, CPU3);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor4, 4, cpu4_alert, cpu4_crit, 80000, 100000, CPU4);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor5, 5, cpu5_alert, cpu5_crit, 80000, 100000, CPU5);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor6, 6, cpu6_alert, cpu6_crit, 80000, 100000, CPU6);
+	TISSOT_TSENS_ZONE(tsens_tz_sensor7, 7, cpu7_alert, cpu7_crit, 80000, 100000, CPU7);
 	TISSOT_TSENS_ZONE(tsens_tz_sensor15, 15, gpu_alert, gpu_crit, 70000, 90000, gpu);
-
-	/*
-	 * Register the sensors the CPU and GPU zones cover a second time
-	 * under the upstream zone names, without trips or cooling maps:
-	 * temperature-reading apps scan /sys/class/thermal for zone types
-	 * matching "cpu" and "gpu" and do not find tsens_tz_sensorN. These
-	 * readout zones give them the conventional names while the control
-	 * zones above stay the only ones driving mitigation.
-	 */
-	TISSOT_TSENS_READOUT(cpu0-thermal, 9);
-	TISSOT_TSENS_READOUT(cpu1-thermal, 10);
-	TISSOT_TSENS_READOUT(cpu2-thermal, 11);
-	TISSOT_TSENS_READOUT(cpu3-thermal, 12);
-	TISSOT_TSENS_READOUT(cpu4-thermal, 4);
-	TISSOT_TSENS_READOUT(cpu5-thermal, 5);
-	TISSOT_TSENS_READOUT(cpu6-thermal, 6);
-	TISSOT_TSENS_READOUT(cpu7-thermal, 7);
-	TISSOT_TSENS_READOUT(gpu-thermal, 15);
 
 	TISSOT_TSENS_READOUT(tsens_tz_sensor0, 0);
 	TISSOT_TSENS_READOUT(tsens_tz_sensor1, 1);
