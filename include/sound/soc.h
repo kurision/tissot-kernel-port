@@ -215,7 +215,7 @@ struct platform_device;
 #define SOC_ENUM_SINGLE(xreg, xshift, xitems, xtexts) \
 	SOC_ENUM_DOUBLE(xreg, xshift, xshift, xitems, xtexts)
 #define SOC_ENUM_SINGLE_EXT(xitems, xtexts) \
-{	.items = xitems, .texts = xtexts }
+{	.reg = SND_SOC_NOPM, .items = xitems, .texts = xtexts }
 #define SOC_VALUE_ENUM_DOUBLE(xreg, xshift_l, xshift_r, xmask, xitems, xtexts, xvalues) \
 {	.reg = xreg, .shift_l = xshift_l, .shift_r = xshift_r, \
 	.mask = xmask, .items = xitems, .texts = xtexts, .values = xvalues}
