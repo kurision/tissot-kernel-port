@@ -849,6 +849,7 @@ int mdss_smmu_probe(struct platform_device *pdev)
 	mdss_smmu->domain = iommu_get_domain_for_dev(dev);
 	if (!mdss_smmu->domain) {
 		pr_err("iommu get domain for dev: %s failed\n", dev_name(dev));
+		rc = -ENODEV;
 		goto disable_power;
 	}
 
@@ -865,8 +866,10 @@ int mdss_smmu_probe(struct platform_device *pdev)
 	mdss_smmu->base.dev = dev;
 	mdss_smmu->domain_attached = true;
 
-	iommu_set_fault_handler(mdss_smmu->domain,
-			mdss_smmu_fault_handler, mdss_smmu);
+	/* DMA domains reserve the cookie for IOVA management. */
+	if (!iommu_is_dma_domain(mdss_smmu->domain))
+		iommu_set_fault_handler(mdss_smmu->domain,
+					mdss_smmu_fault_handler, mdss_smmu);
 	address = of_get_address(pdev->dev.of_node, 0, 0, 0);
 	if (address) {
 		size = address + 1;
