@@ -1395,6 +1395,8 @@ static int msm_vidc_setup_context_bank(struct context_bank_info *cb,
 	}
 
 	cb->domain = iommu_get_domain_for_dev(cb->dev);
+	if (!cb->domain)
+		return -ENODEV;
 
 	/*
 	 * configure device segment size and segment boundary to ensure
@@ -1589,8 +1591,10 @@ static int msm_vidc_populate_context_bank(struct device *dev,
 		goto err_setup_cb;
 	}
 
-	iommu_set_fault_handler(cb->domain,
-		msm_vidc_smmu_fault_handler, (void *)core);
+	/* DMA domains reserve the cookie for IOVA management. */
+	if (!iommu_is_dma_domain(cb->domain))
+		iommu_set_fault_handler(cb->domain,
+					msm_vidc_smmu_fault_handler, (void *)core);
 
 	return 0;
 

@@ -1568,9 +1568,11 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 		goto cb_init_fail;
 	}
 
-	iommu_set_fault_handler(cb->domain,
-			cam_smmu_iommu_fault_handler,
-			(void *)cb->name);
+	/* DMA domains reserve the cookie for IOVA management. */
+	if (!iommu_is_dma_domain(cb->domain))
+		iommu_set_fault_handler(cb->domain,
+					cam_smmu_iommu_fault_handler,
+					(void *)cb->name);
 
 	/* increment count to next bank */
 	iommu_cb_set.cb_init_count++;
