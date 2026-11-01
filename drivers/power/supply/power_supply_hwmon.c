@@ -217,6 +217,15 @@ static int power_supply_hwmon_read_string(struct device *dev,
 	return 0;
 }
 
+static int power_supply_hwmon_scale(struct power_supply *psy, int prop)
+{
+	if (prop == POWER_SUPPLY_PROP_VOLTAGE_MAX &&
+	    psy->desc->voltage_max_in_mv)
+		return 1;
+
+	return 1000;
+}
+
 static int
 power_supply_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
 			u32 attr, int channel, long *val)
@@ -224,7 +233,7 @@ power_supply_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
 	struct power_supply_hwmon *psyhw = dev_get_drvdata(dev);
 	struct power_supply *psy = psyhw->psy;
 	union power_supply_propval pspval;
-	int ret, prop;
+	int ret, prop, scale;
 
 	prop = power_supply_hwmon_to_property(type, attr, channel);
 	if (prop < 0)
@@ -242,7 +251,8 @@ power_supply_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
 	 */
 	case hwmon_curr:
 	case hwmon_in:
-		pspval.intval = DIV_ROUND_CLOSEST(pspval.intval, 1000);
+		scale = power_supply_hwmon_scale(psy, prop);
+		pspval.intval = DIV_ROUND_CLOSEST(pspval.intval, scale);
 		break;
 	case hwmon_power:
 		/*
@@ -273,7 +283,7 @@ power_supply_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
 	struct power_supply_hwmon *psyhw = dev_get_drvdata(dev);
 	struct power_supply *psy = psyhw->psy;
 	union power_supply_propval pspval;
-	int prop;
+	int prop, scale;
 
 	prop = power_supply_hwmon_to_property(type, attr, channel);
 	if (prop < 0)
@@ -289,8 +299,8 @@ power_supply_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
 	 */
 	case hwmon_curr:
 	case hwmon_in:
-		if (check_mul_overflow(pspval.intval, 1000,
-				       &pspval.intval))
+		scale = power_supply_hwmon_scale(psy, prop);
+		if (check_mul_overflow(val, scale, &pspval.intval))
 			return -EOVERFLOW;
 		break;
 	/*

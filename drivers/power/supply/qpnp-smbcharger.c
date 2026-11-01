@@ -8220,6 +8220,7 @@ static int smbchg_probe(struct platform_device *pdev)
 	chip->batt_psy_d.num_properties	= ARRAY_SIZE(smbchg_battery_properties);
 	chip->batt_psy_d.external_power_changed = smbchg_external_power_changed;
 	chip->batt_psy_d.property_is_writeable = smbchg_battery_is_writeable;
+	chip->batt_psy_d.voltage_max_in_mv = true;
 
 	batt_psy_cfg.drv_data = chip;
 	batt_psy_cfg.num_supplicants = 0;

@@ -373,7 +373,8 @@ struct power_supply_desc {
 	/* For APM emulation, think legacy userspace. */
 	int use_for_apm;
 
-	ANDROID_KABI_RESERVE(1);
+	/* The legacy VOLTAGE_MAX getter and setter use millivolts. */
+	ANDROID_KABI_USE(1, bool voltage_max_in_mv);
 };
 
 struct power_supply_ext {
