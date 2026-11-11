@@ -101,6 +101,20 @@
 		qcom,msm-mbhc-gnd-swh = <1>;
 
 		/*
+		 * Headset detection as the Xiaomi and LineageOS tissot kernels
+		 * do it: the mic line and buttons are measured with MICBIAS,
+		 * the HPH impedance reading is not used to call a headphone a
+		 * line-out, there is no extension-cable detection, and with no
+		 * GND/MIC switch a swapped plug is still a headset. The keys
+		 * match the ROM's Button Jack layout.
+		 */
+		qcom,msm-mbhc-micbias-for-cs;
+		qcom,msm-mbhc-no-impedance-detect;
+		qcom,msm-mbhc-no-extn-cable;
+		qcom,msm-mbhc-gnd-mic-swap-headset;
+		qcom,msm-mbhc-key-codes = <KEY_MEDIA BTN_1 BTN_2>;
+
+		/*
 		 * GPIO 141 and its pinctrl states. It gates the headset jack
 		 * path, so MBHC keeps it on while a plug is inserted; the
 		 * loudspeaker is the MAX98927 on QUIN MI2S.
@@ -112,10 +126,9 @@
 		/*
 		 * The CDC's pins. The machine driver muxes them itself, so
 		 * they have to be named here; the states themselves are in
-		 * the pinctrl nodes below.
+		 * the pinctrl nodes below. The board has no US/Euro GND/MIC
+		 * switch, so none is named.
 		 */
-		qcom,cdc-us-euro-gpios = <&tlmm 63 0>;
-		qcom,cdc-us-eu-gpios = <&cdc_us_euro_sw>;
 		qcom,cdc-comp-gpios = <&cdc_comp_gpios>;
 		qcom,pri-mi2s-gpios = <&cdc_pri_mi2s_gpios>;
 		qcom,quin-mi2s-gpios = <&cdc_quin_mi2s_gpios>;
