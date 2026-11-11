@@ -1227,7 +1227,8 @@ static irqreturn_t wcd_mbhc_btn_press_handler(int irq, void *data)
 	mbhc->is_btn_press = true;
 	msec_val = jiffies_to_msecs(jiffies - mbhc->jiffies_atreport);
 	pr_debug("%s: msec_val = %ld\n", __func__, msec_val);
-	if (msec_val < MBHC_BUTTON_PRESS_THRESHOLD_MIN) {
+	if (msec_val < (mbhc->mbhc_cfg->btn_press_min_ms ?:
+			MBHC_BUTTON_PRESS_THRESHOLD_MIN)) {
 		pr_debug("%s: Too short, ignore button press\n", __func__);
 		goto done;
 	}

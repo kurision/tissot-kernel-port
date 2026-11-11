@@ -144,6 +144,7 @@ do {                                                    \
 #define HPHR_CROSS_CONN_THRESHOLD 100
 
 #define WCD_MBHC_BTN_PRESS_COMPL_TIMEOUT_MS  50
+
 #define ANC_DETECT_RETRY_CNT 7
 #define WCD_MBHC_SPL_HS_CNT  1
 
@@ -439,6 +440,10 @@ struct wcd_mbhc_config {
 	bool no_impedance_detect;
 	/* Report a GND/MIC swapped plug as a headset, for boards without a switch */
 	bool gnd_mic_swap_headset;
+	/* Detection timing overrides in ms, 0 for the defaults below */
+	u32 btn_press_compl_timeout_ms;
+	u32 detect_plug_time_ms;
+	u32 btn_press_min_ms;
 	bool hs_ext_micbias;
 	bool gnd_det_en;
 	int key_code[WCD_MBHC_KEYCODE_NUM];

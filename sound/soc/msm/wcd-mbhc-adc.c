@@ -753,7 +753,9 @@ correct_plug_type:
 		if (mbhc->mbhc_cb->bcs_enable)
 			mbhc->mbhc_cb->bcs_enable(mbhc, false);
 
-	timeout = jiffies + msecs_to_jiffies(HS_DETECT_PLUG_TIME_MS);
+	timeout = jiffies +
+		  msecs_to_jiffies(mbhc->mbhc_cfg->detect_plug_time_ms ?:
+				   HS_DETECT_PLUG_TIME_MS);
 	while (!time_after(jiffies, timeout)) {
 		if (mbhc->hs_detect_work_stop) {
 			pr_debug("%s: stop requested: %d\n", __func__,

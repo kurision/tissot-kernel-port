@@ -467,7 +467,8 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	 * loop.
 	 */
 	rc = wait_for_completion_timeout(&mbhc->btn_press_compl,
-			msecs_to_jiffies(WCD_MBHC_BTN_PRESS_COMPL_TIMEOUT_MS));
+			msecs_to_jiffies(mbhc->mbhc_cfg->btn_press_compl_timeout_ms ?:
+					 WCD_MBHC_BTN_PRESS_COMPL_TIMEOUT_MS));
 
 	WCD_MBHC_REG_READ(WCD_MBHC_BTN_RESULT, btn_result);
 	WCD_MBHC_REG_READ(WCD_MBHC_HS_COMP_RESULT, hs_comp_res);
@@ -518,7 +519,9 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 
 correct_plug_type:
 
-	timeout = jiffies + msecs_to_jiffies(HS_DETECT_PLUG_TIME_MS);
+	timeout = jiffies +
+		  msecs_to_jiffies(mbhc->mbhc_cfg->detect_plug_time_ms ?:
+				   HS_DETECT_PLUG_TIME_MS);
 	while (!time_after(jiffies, timeout)) {
 		if (mbhc->hs_detect_work_stop) {
 			pr_debug("%s: stop requested: %d\n", __func__,

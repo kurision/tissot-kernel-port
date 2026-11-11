@@ -447,12 +447,39 @@ static void msm8952_jack_path_ctrl(struct snd_soc_component *component,
 	enable_spk_ext_pa(component, on);
 }
 
+/*
+ * MBHC calibration: the headset mic comparator's maximum reference and
+ * the button thresholds, in mV, for the current source and MICBIAS alike.
+ * The defaults are CAF's; a board can replace them from its sound node.
+ */
+static u32 msm8952_hs_vref_max_mv = 1500;
+static u32 msm8952_btn_mv[WCD_MBHC_DEF_BUTTONS] = { 75, 150, 225, 450, 500 };
+
 /* Board-specific MBHC behaviour, each opt-in from the sound node */
 static void msm8952_parse_mbhc_dt(struct device *dev)
 {
 	struct device_node *np = dev->of_node;
 	u32 keys[WCD_MBHC_KEYCODE_NUM];
+	u32 btn[WCD_MBHC_DEF_BUTTONS];
 	int i, n;
+
+	of_property_read_u32(np, "qcom,msm-mbhc-hs-vref-max-mv",
+			     &msm8952_hs_vref_max_mv);
+	n = of_property_read_variable_u32_array(np,
+						"qcom,msm-mbhc-btn-thresholds-mv",
+						btn, 1, ARRAY_SIZE(btn));
+	if (n > 0) {
+		for (i = 0; i < ARRAY_SIZE(msm8952_btn_mv); i++)
+			msm8952_btn_mv[i] = i < n ? btn[i] : 0;
+	} else if (n != -EINVAL) {
+		dev_err(dev, "invalid qcom,msm-mbhc-btn-thresholds-mv\n");
+	}
+	of_property_read_u32(np, "qcom,msm-mbhc-btn-press-compl-timeout-ms",
+			     &mbhc_cfg.btn_press_compl_timeout_ms);
+	of_property_read_u32(np, "qcom,msm-mbhc-detect-plug-time-ms",
+			     &mbhc_cfg.detect_plug_time_ms);
+	of_property_read_u32(np, "qcom,msm-mbhc-btn-press-min-ms",
+			     &mbhc_cfg.btn_press_min_ms);
 
 	if (of_property_read_bool(np, "qcom,msm-mbhc-micbias-for-cs"))
 		mbhc_cfg.micbias_for_cs = true;
@@ -1681,6 +1708,7 @@ static void *def_msm8952_wcd_mbhc_cal(void)
 	void *msm8952_wcd_cal;
 	struct wcd_mbhc_btn_detect_cfg *btn_cfg;
 	u16 *btn_low, *btn_high;
+	int i;
 
 	msm8952_wcd_cal = kzalloc(WCD_MBHC_CAL_SIZE(WCD_MBHC_DEF_BUTTONS,
 				WCD_MBHC_DEF_RLOADS), GFP_KERNEL);
@@ -1688,7 +1716,7 @@ static void *def_msm8952_wcd_mbhc_cal(void)
 		return NULL;
 
 #define S(X, Y) ((WCD_MBHC_CAL_PLUG_TYPE_PTR(msm8952_wcd_cal)->X) = (Y))
-	S(v_hs_max, 1500);
+	S(v_hs_max, msm8952_hs_vref_max_mv);
 #undef S
 #define S(X, Y) ((WCD_MBHC_CAL_BTN_DET_PTR(msm8952_wcd_cal)->X) = (Y))
 	S(num_btn, WCD_MBHC_DEF_BUTTONS);
@@ -1710,17 +1738,12 @@ static void *def_msm8952_wcd_mbhc_cal(void)
 	 * 110-180 == Button 1
 	 * 210-290 == Button 2
 	 * 360-680 == Button 3
+	 * A board can replace them with qcom,msm-mbhc-btn-thresholds-mv.
 	 */
-	btn_low[0] = 75;
-	btn_high[0] = 75;
-	btn_low[1] = 150;
-	btn_high[1] = 150;
-	btn_low[2] = 225;
-	btn_high[2] = 225;
-	btn_low[3] = 450;
-	btn_high[3] = 450;
-	btn_low[4] = 500;
-	btn_high[4] = 500;
+	for (i = 0; i < btn_cfg->num_btn; i++) {
+		btn_low[i] = msm8952_btn_mv[i];
+		btn_high[i] = msm8952_btn_mv[i];
+	}
 
 	return msm8952_wcd_cal;
 }
