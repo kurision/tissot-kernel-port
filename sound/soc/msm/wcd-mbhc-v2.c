@@ -897,6 +897,12 @@ static bool wcd_mbhc_moisture_detect(struct wcd_mbhc *mbhc, bool detection_type)
 	return ret;
 }
 
+static void wcd_mbhc_jack_path_ctrl(struct wcd_mbhc *mbhc, bool on)
+{
+	if (mbhc->mbhc_cfg->jack_path_ctrl)
+		mbhc->mbhc_cfg->jack_path_ctrl(mbhc->component, on);
+}
+
 static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 {
 	bool detection_type = 0;
@@ -942,6 +948,12 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 		 */
 		if (wcd_mbhc_moisture_detect(mbhc, detection_type))
 			goto done;
+
+		/*
+		 * The plug type and impedance are measured through the jack
+		 * path, so close it before detection starts.
+		 */
+		wcd_mbhc_jack_path_ctrl(mbhc, true);
 
 		/* Make sure MASTER_BIAS_CTL is enabled */
 		mbhc->mbhc_cb->mbhc_bias(component, true);
@@ -1021,6 +1033,7 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_ELECT_SCHMT_ISRC, 0);
 		mbhc->extn_cable_hph_rem = false;
 		wcd_mbhc_report_plug(mbhc, 0, jack_type);
+		wcd_mbhc_jack_path_ctrl(mbhc, false);
 
 		if (mbhc->mbhc_cfg->enable_usbc_analog &&
 			mbhc->mbhc_cfg->fsa_enable) {
@@ -1048,6 +1061,8 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_FSM_EN, 0);
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_BTN_ISRC_CTL, 0);
 		mbhc->extn_cable_hph_rem = false;
+		/* Removed before detection reported a plug */
+		wcd_mbhc_jack_path_ctrl(mbhc, false);
 	}
 
 done:

@@ -431,6 +431,8 @@ struct wcd_mbhc_config {
 	bool detect_extn_cable;
 	bool mono_stero_detection;
 	bool (*swap_gnd_mic)(struct snd_soc_component *component, bool active);
+	/* Board switch in the jack path, on while a plug is inserted */
+	void (*jack_path_ctrl)(struct snd_soc_component *component, bool on);
 	bool hs_ext_micbias;
 	bool gnd_det_en;
 	int key_code[WCD_MBHC_KEYCODE_NUM];

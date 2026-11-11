@@ -436,6 +436,17 @@ static int enable_spk_ext_pa(struct snd_soc_component *component, int enable)
 	return 0;
 }
 
+/*
+ * On boards that set qcom,msm-mbhc-jack-ext-pa, the external PA GPIO
+ * gates the headset jack path: with it low, plug detection sees an open
+ * circuit and the HPH outputs are silent. Keep it on while a plug is in.
+ */
+static void msm8952_jack_path_ctrl(struct snd_soc_component *component,
+				   bool on)
+{
+	enable_spk_ext_pa(component, on);
+}
+
 static bool msm8952_swap_gnd_mic(struct snd_soc_component *component,
 							bool active)
 {
@@ -3928,6 +3939,10 @@ parse_mclk_freq:
 	if (ret < 0)
 		pr_err("%s:  doesn't support external speaker pa\n",
 				__func__);
+	else if (gpio_is_valid(pdata->spk_ext_pa_gpio) &&
+		 of_property_read_bool(pdev->dev.of_node,
+				       "qcom,msm-mbhc-jack-ext-pa"))
+		mbhc_cfg.jack_path_ctrl = msm8952_jack_path_ctrl;
 
 	pdata->comp_gpio_p = of_parse_phandle(pdev->dev.of_node,
 					"qcom,cdc-comp-gpios", 0);
