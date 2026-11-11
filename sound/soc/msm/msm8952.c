@@ -3907,8 +3907,13 @@ parse_mclk_freq:
 			__func__, spk_ext_pa);
 	}
 
+	/*
+	 * qcom,msm-spk-ext-pa is a GPIO specifier, so its phandle is the
+	 * TLMM, not a qcom,msm-cdc-pinctrl node. The PA's pinctrl states
+	 * are in the node qcom,cdc-ext-pa-gpios names.
+	 */
 	pdata->spk_ext_pa_gpio_p = of_parse_phandle(pdev->dev.of_node,
-							spk_ext_pa, 0);
+						    "qcom,cdc-ext-pa-gpios", 0);
 	ret = is_us_eu_switch_gpio_support(pdev, pdata);
 	if (ret < 0) {
 		pr_err("%s: failed to is_us_eu_switch_gpio_support %d\n",
