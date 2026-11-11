@@ -100,9 +100,14 @@
 		qcom,msm-mbhc-hphl-swh = <1>;
 		qcom,msm-mbhc-gnd-swh = <1>;
 
-		/* The speaker amplifier's enable, and its pinctrl states. */
+		/*
+		 * GPIO 141 and its pinctrl states. It gates the headset jack
+		 * path, so MBHC keeps it on while a plug is inserted; the
+		 * loudspeaker is the MAX98927 on QUIN MI2S.
+		 */
 		qcom,msm-spk-ext-pa = <&tlmm 141 0>;
 		qcom,cdc-ext-pa-gpios = <&cdc_ext_pa_gpios>;
+		qcom,msm-mbhc-jack-ext-pa;
 
 		/*
 		 * The CDC's pins. The machine driver muxes them itself, so
