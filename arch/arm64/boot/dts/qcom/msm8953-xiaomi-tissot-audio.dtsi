@@ -113,6 +113,12 @@
 		qcom,msm-mbhc-no-extn-cable;
 		qcom,msm-mbhc-gnd-mic-swap-headset;
 		qcom,msm-mbhc-key-codes = <KEY_MEDIA BTN_1 BTN_2>;
+		/* The vendor kernel's calibration and timing for this board */
+		qcom,msm-mbhc-hs-vref-max-mv = <1600>;
+		qcom,msm-mbhc-btn-thresholds-mv = <91 259 488 488 488>;
+		qcom,msm-mbhc-btn-press-compl-timeout-ms = <200>;
+		qcom,msm-mbhc-detect-plug-time-ms = <2500>;
+		qcom,msm-mbhc-btn-press-min-ms = <750>;
 
 		/*
 		 * GPIO 141 and its pinctrl states. It gates the headset jack
@@ -580,6 +586,8 @@
 		cdc-vdd-mic-bias-supply = <&pm8953_l13>;
 		qcom,cdc-vdd-mic-bias-voltage = <3125000 3125000>;
 		qcom,cdc-vdd-mic-bias-current = <5000>;
+		/* MICBIAS output in uV: the vendor kernel's 2.2 V for tissot */
+		qcom,cdc-micbias-cfilt-mv = <2200000>;
 
 		qcom,cdc-mclk-clk-rate = <9600000>;
 
