@@ -447,6 +447,34 @@ static void msm8952_jack_path_ctrl(struct snd_soc_component *component,
 	enable_spk_ext_pa(component, on);
 }
 
+/* Board-specific MBHC behaviour, each opt-in from the sound node */
+static void msm8952_parse_mbhc_dt(struct device *dev)
+{
+	struct device_node *np = dev->of_node;
+	u32 keys[WCD_MBHC_KEYCODE_NUM];
+	int i, n;
+
+	if (of_property_read_bool(np, "qcom,msm-mbhc-micbias-for-cs"))
+		mbhc_cfg.micbias_for_cs = true;
+	if (of_property_read_bool(np, "qcom,msm-mbhc-no-impedance-detect"))
+		mbhc_cfg.no_impedance_detect = true;
+	if (of_property_read_bool(np, "qcom,msm-mbhc-no-extn-cable"))
+		mbhc_cfg.detect_extn_cable = false;
+	if (of_property_read_bool(np, "qcom,msm-mbhc-gnd-mic-swap-headset"))
+		mbhc_cfg.gnd_mic_swap_headset = true;
+
+	n = of_property_count_u32_elems(np, "qcom,msm-mbhc-key-codes");
+	if (n <= 0)
+		return;
+	n = min(n, WCD_MBHC_KEYCODE_NUM);
+	if (of_property_read_u32_array(np, "qcom,msm-mbhc-key-codes", keys, n)) {
+		dev_err(dev, "invalid qcom,msm-mbhc-key-codes\n");
+		return;
+	}
+	for (i = 0; i < WCD_MBHC_KEYCODE_NUM; i++)
+		mbhc_cfg.key_code[i] = i < n ? keys[i] : 0;
+}
+
 static bool msm8952_swap_gnd_mic(struct snd_soc_component *component,
 							bool active)
 {
@@ -3943,6 +3971,7 @@ parse_mclk_freq:
 		 of_property_read_bool(pdev->dev.of_node,
 				       "qcom,msm-mbhc-jack-ext-pa"))
 		mbhc_cfg.jack_path_ctrl = msm8952_jack_path_ctrl;
+	msm8952_parse_mbhc_dt(&pdev->dev);
 
 	pdata->comp_gpio_p = of_parse_phandle(pdev->dev.of_node,
 					"qcom,cdc-comp-gpios", 0);

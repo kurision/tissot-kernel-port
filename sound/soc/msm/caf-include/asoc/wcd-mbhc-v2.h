@@ -433,6 +433,12 @@ struct wcd_mbhc_config {
 	bool (*swap_gnd_mic)(struct snd_soc_component *component, bool active);
 	/* Board switch in the jack path, on while a plug is inserted */
 	void (*jack_path_ctrl)(struct snd_soc_component *component, bool on);
+	/* Bias the mic line with MICBIAS where the current source is used */
+	bool micbias_for_cs;
+	/* Skip HPH impedance measurement and its line-out classification */
+	bool no_impedance_detect;
+	/* Report a GND/MIC swapped plug as a headset, for boards without a switch */
+	bool gnd_mic_swap_headset;
 	bool hs_ext_micbias;
 	bool gnd_det_en;
 	int key_code[WCD_MBHC_KEYCODE_NUM];

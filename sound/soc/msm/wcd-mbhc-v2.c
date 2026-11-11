@@ -111,6 +111,7 @@ static void wcd_program_btn_threshold(const struct wcd_mbhc *mbhc, bool micbias)
 void wcd_enable_curr_micbias(const struct wcd_mbhc *mbhc,
 				const enum wcd_mbhc_cs_mb_en_flag cs_mb_en)
 {
+	enum wcd_mbhc_cs_mb_en_flag mode = cs_mb_en;
 
 	/*
 	 * Some codecs handle micbias/pullup enablement in codec
@@ -123,7 +124,11 @@ void wcd_enable_curr_micbias(const struct wcd_mbhc *mbhc,
 
 	pr_debug("%s: enter, cs_mb_en: %d\n", __func__, cs_mb_en);
 
-	switch (cs_mb_en) {
+	if (cs_mb_en == WCD_MBHC_EN_CS && mbhc->mbhc_cfg &&
+	    mbhc->mbhc_cfg->micbias_for_cs)
+		mode = WCD_MBHC_EN_MB;
+
+	switch (mode) {
 	case WCD_MBHC_EN_CS:
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_MICB_CTRL, 0);
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_BTN_ISRC_CTL, 3);
@@ -159,6 +164,32 @@ void wcd_enable_curr_micbias(const struct wcd_mbhc *mbhc,
 	pr_debug("%s: exit\n", __func__);
 }
 EXPORT_SYMBOL(wcd_enable_curr_micbias);
+
+static bool wcd_mbhc_micbias_for_cs(struct wcd_mbhc *mbhc)
+{
+	/* The codec's events can arrive before wcd_mbhc_start() */
+	return mbhc->mbhc_cfg && mbhc->mbhc_cfg->micbias_for_cs;
+}
+
+/*
+ * Whether MICBIAS stays on for detection when a PA or MICBIAS user goes
+ * away. With micbias_for_cs it follows the plug rather than the MICBIAS
+ * state, since the mic line is never measured with the current source.
+ */
+static bool wcd_mbhc_keep_micbias(struct wcd_mbhc *mbhc, bool micbias2)
+{
+	if (wcd_mbhc_micbias_for_cs(mbhc))
+		return mbhc->current_plug != MBHC_PLUG_TYPE_NONE;
+	return micbias2;
+}
+
+/* The detection mode to fall back to when MICBIAS is not kept on */
+static enum wcd_mbhc_cs_mb_en_flag wcd_mbhc_idle_mode(struct wcd_mbhc *mbhc)
+{
+	if (wcd_mbhc_micbias_for_cs(mbhc))
+		return WCD_MBHC_EN_NONE;
+	return WCD_MBHC_EN_CS;
+}
 
 static const char *wcd_mbhc_get_event_string(int event)
 {
@@ -301,13 +332,16 @@ out_micb_en:
 					  &mbhc->event_state)))
 			/* enable pullup and cs, disable mb */
 			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_PULLUP);
+		else if (wcd_mbhc_keep_micbias(mbhc, false))
+			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_MB);
 		else
 			/* enable current source and disable mb, pullup*/
-			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_CS);
+			wcd_enable_curr_micbias(mbhc, wcd_mbhc_idle_mode(mbhc));
 
 		/* configure cap settings properly when micbias is disabled */
 		if (mbhc->mbhc_cb->set_cap_mode)
-			mbhc->mbhc_cb->set_cap_mode(component, micbias1, false);
+			mbhc->mbhc_cb->set_cap_mode(component, micbias1,
+					wcd_mbhc_keep_micbias(mbhc, false));
 		break;
 	case WCD_EVENT_PRE_HPHL_PA_OFF:
 		mutex_lock(&mbhc->hphl_pa_lock);
@@ -318,12 +352,12 @@ out_micb_en:
 			hphlocp_off_report(mbhc, SND_JACK_OC_HPHL);
 		clear_bit(WCD_MBHC_EVENT_PA_HPHL, &mbhc->event_state);
 		/* check if micbias is enabled */
-		if (micbias2)
+		if (wcd_mbhc_keep_micbias(mbhc, micbias2))
 			/* Disable cs, pullup & enable micbias */
 			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_MB);
 		else
 			/* Disable micbias, pullup & enable cs */
-			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_CS);
+			wcd_enable_curr_micbias(mbhc, wcd_mbhc_idle_mode(mbhc));
 		mutex_unlock(&mbhc->hphl_pa_lock);
 		clear_bit(WCD_MBHC_ANC0_OFF_ACK, &mbhc->hph_anc_state);
 		break;
@@ -336,12 +370,12 @@ out_micb_en:
 			hphrocp_off_report(mbhc, SND_JACK_OC_HPHR);
 		clear_bit(WCD_MBHC_EVENT_PA_HPHR, &mbhc->event_state);
 		/* check if micbias is enabled */
-		if (micbias2)
+		if (wcd_mbhc_keep_micbias(mbhc, micbias2))
 			/* Disable cs, pullup & enable micbias */
 			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_MB);
 		else
 			/* Disable micbias, pullup & enable cs */
-			wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_CS);
+			wcd_enable_curr_micbias(mbhc, wcd_mbhc_idle_mode(mbhc));
 		mutex_unlock(&mbhc->hphr_pa_lock);
 		clear_bit(WCD_MBHC_ANC1_OFF_ACK, &mbhc->hph_anc_state);
 		break;
@@ -820,7 +854,9 @@ void wcd_mbhc_find_plug_and_report(struct wcd_mbhc *mbhc,
 			wcd_mbhc_report_plug(mbhc, 0, SND_JACK_HEADPHONE);
 		if (mbhc->current_plug == MBHC_PLUG_TYPE_HEADSET)
 			wcd_mbhc_report_plug(mbhc, 0, SND_JACK_HEADSET);
-		wcd_mbhc_report_plug(mbhc, 1, SND_JACK_UNSUPPORTED);
+		wcd_mbhc_report_plug(mbhc, 1,
+				     mbhc->mbhc_cfg->gnd_mic_swap_headset ?
+				     SND_JACK_HEADSET : SND_JACK_UNSUPPORTED);
 	} else if (plug_type == MBHC_PLUG_TYPE_HEADSET) {
 		if (mbhc->mbhc_cfg->enable_anc_mic_detect &&
 		    mbhc->mbhc_fn->wcd_mbhc_detect_anc_plug_type)
@@ -1898,6 +1934,9 @@ int wcd_mbhc_start(struct wcd_mbhc *mbhc, struct wcd_mbhc_config *mbhc_cfg)
 			}
 		}
 	}
+	if (mbhc_cfg->no_impedance_detect)
+		mbhc->impedance_detect = false;
+
 	/* Set btn key code */
 	if ((!mbhc->is_btn_already_regd) && wcd_mbhc_set_keycode(mbhc))
 		pr_err("Set btn key code error!!!\n");
