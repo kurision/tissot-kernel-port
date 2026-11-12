@@ -292,6 +292,14 @@ cp "$OUT_DIR/.config" "$SNAP/$RUN-prebuild.config"
 "${make_args[@]}" rustavailable || exit 1
 "${make_args[@]}" olddefconfig
 
+# BORE is carried by hand from the upstream patch for one kernel version
+# (https://github.com/firelzrd/bore-scheduler, patches/stable/). Refuse to
+# build it on scheduler files that changed since it was last checked
+# against that patch; porting/tools/bore-sync.py says how to re-check.
+if grep -qx 'CONFIG_SCHED_BORE=y' "$OUT_DIR/.config"; then
+	python3 -I "$REPO/porting/tools/bore-sync.py" check || exit 1
+fi
+
 # The symbols that have to be on. The configuration is the port's, so this
 # is the only place they can be turned on.
 #   CONFIG_KSU: KernelSU-Next is built in, and the manager only talks to
