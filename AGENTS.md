@@ -174,8 +174,8 @@ the kernel development skill's `references/drivers.md`:
 - No bring-up instrumentation in kernel source: no run numbers, no
   `DEBUG runNNN` comments, no `%px`, no hard-coded physical addresses, no
   boot-only dumps. Comments say what the code does and why, not which boot
-  found it. Kernel source does not cite `porting/` documents; the commit
-  message carries the evidence.
+  found it. Kernel source does not cite `porting/` documents. Keep local
+  bring-up evidence in local notes or user-facing reports.
 - Imported trees keep their donor style until they get their own cleanup
   pass: the CAF 4.19 drivers (camera, mdss, vidc_3x, kgsl, audio, qseecom,
   diag, ion), KernelSU-Next, and the third-party BORE and ADIOS patches.
@@ -193,9 +193,11 @@ Follow `Documentation/process/submitting-patches.rst`:
   `iommu/qcom:`, `arm64: dts: qcom: msm8953:`, `soc: qcom: subsystem-compat:`.
   `treewide:` only for a mechanical change across subsystems; `porting:`,
   `ci:` and `gitignore:` for this repository's tooling.
-- Body: why the change is needed and the evidence (log line, run, file and
-  line), and what was and was not verified. Write "not built" or
-  "unverified" when that is the case.
+- Commit descriptions explain the problem, what changed, and why it fixes
+  or improves the code. Exclude personal information, machine details, local
+  paths, run identifiers, local logs, and build/test status such as "not built"
+  or "unverified." Keep those details in local notes or user-facing reports.
+  Do not claim results that were not verified.
 - One logical change per commit; every commit builds on its own. Stage only
   the files the commit is about.
 - Trailers:
