@@ -371,3 +371,19 @@ porting/artifacts/**/package-control.json
 /porting/HANDOFF*.md
 /docs/handoff-*.md
 /porting/artifacts/*handoff*
+
+# Diagnostic evidence tooling: the boot-testing scripts carry this host's
+# serials, snapshot layout and run conventions; they are restored locally
+# from the pre-rewrite history and stay out of the repository.
+porting/logging/clear-logdump.sh
+porting/logging/collect-logs.sh
+porting/logging/decode-pstore.py
+porting/logging/decode-qsee-trace.py
+porting/logging/decode-reset.py
+porting/logging/observe-gpu-boot.py
+porting/logging/pull-built-kernel.sh
+porting/logging/pull-logs.sh
+porting/logging/pull-run-evidence.sh
+porting/logging/usb-boot-capture.py
+porting/logging/test_*.py
+porting/logging/README.md
