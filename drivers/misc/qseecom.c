@@ -2132,11 +2132,6 @@ static int qseecom_set_client_mem_param(struct qseecom_dev_handle *data,
 	}
 	data->client.sb_length = req.sb_len;
 	data->client.user_virt_sb_base = (uintptr_t)req.virt_sb_base;
-	pr_info("snapshot35 qsee_set_mem pid=%d tgid=%d app_id=%u app_name=%.*s fd=%d sb_phys=0x%llx sb_len=%zu mapped_len=%zu dmabuf=%u\n",
-		current->pid, current->tgid, data->client.app_id,
-		MAX_APP_NAME_SIZE, data->client.app_name, req.ifd_data_fd,
-		(unsigned long long)data->client.sb_phys,
-		data->client.sb_length, len, !!data->client.dmabuf);
 
 	return ret;
 exit:
@@ -3907,40 +3902,6 @@ static int __qseecom_send_cmd(struct qseecom_dev_handle *data,
 		*(uint32_t *)cmd_buf = QSEOS_CLIENT_SEND_DATA_COMMAND;
 	else
 		*(uint32_t *)cmd_buf = QSEOS_CLIENT_SEND_DATA_COMMAND_WHITELIST;
-
-	{
-		bool version_lt40 = qseecom.qsee_version < QSEE_VERSION_40;
-		u32 app_id, qseos_cmd, req_len, rsp_len, sg_len;
-		u64 req_pa, rsp_pa, sg_pa;
-
-		if (version_lt40) {
-			app_id = send_data_req.app_id;
-			qseos_cmd = send_data_req.qsee_cmd_id;
-			req_pa = send_data_req.req_ptr;
-			req_len = send_data_req.req_len;
-			rsp_pa = send_data_req.rsp_ptr;
-			rsp_len = send_data_req.rsp_len;
-			sg_pa = send_data_req.sglistinfo_ptr;
-			sg_len = send_data_req.sglistinfo_len;
-		} else {
-			app_id = send_data_req_64bit.app_id;
-			qseos_cmd = send_data_req_64bit.qsee_cmd_id;
-			req_pa = send_data_req_64bit.req_ptr;
-			req_len = send_data_req_64bit.req_len;
-			rsp_pa = send_data_req_64bit.rsp_ptr;
-			rsp_len = send_data_req_64bit.rsp_len;
-			sg_pa = send_data_req_64bit.sglistinfo_ptr;
-			sg_len = send_data_req_64bit.sglistinfo_len;
-		}
-		pr_info("snapshot35 qsee_send_desc pid=%d tgid=%d app_id=%u app_name=%.*s qsee_version=0x%x version_lt40=%u app_arch=%u is_phys=%u use_legacy_cmd=%u whitelist=%u dmabuf=%u qseos_cmd=%u desc_len=%zu req_pa=0x%llx req_len=%u rsp_pa=0x%llx rsp_len=%u sg_pa=0x%llx sg_len=%u sg_count=%u\n",
-			current->pid, current->tgid, app_id, MAX_APP_NAME_SIZE,
-			data->client.app_name, qseecom.qsee_version, version_lt40,
-			data->client.app_arch, is_phys_adr, data->use_legacy_cmd,
-			qseecom.whitelist_support, !!data->client.dmabuf,
-			qseos_cmd, cmd_len, (unsigned long long)req_pa, req_len,
-			(unsigned long long)rsp_pa, rsp_len,
-			(unsigned long long)sg_pa, sg_len, data->sglist_cnt);
-	}
 
 	if (data->client.dmabuf) {
 		ret = qseecom_dmabuf_cache_operations(data->client.dmabuf,
@@ -9385,9 +9346,6 @@ static int qseecom_check_whitelist_feature(void)
 	mutex_unlock(&app_access_lock);
 	if (!ret)
 		version = desc.ret[0];
-	pr_info("snapshot43 whitelist_probe pid=%d ret=%d version=0x%x enabled=%u\n",
-		current->pid, ret, (unsigned int)version,
-		(unsigned int)(version >= MAKE_WHITELIST_VERSION(1, 0, 0)));
 
 	return version >= MAKE_WHITELIST_VERSION(1, 0, 0);
 }

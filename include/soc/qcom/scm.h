@@ -142,12 +142,6 @@ static inline int scm_call2_noretry(u32 smc_id, struct scm_desc *desc)
 	for (i = 0; i < MAX_SCM_ARGS; i++)
 		mdesc.args[i] = desc->args[i];
 
-	if (SCM_OWNER_ID(smc_id) == 50 || SCM_OWNER_ID(smc_id) == 48)
-		pr_info("snapshot43 qsee_send pid=%d smc=%08x argc=%u arginfo=0x%x args0=0x%llx args1=0x%llx args2=0x%llx args3=0x%llx\n",
-			current->pid, smc_id, desc->arginfo & 0xf,
-			desc->arginfo, desc->args[0], desc->args[1],
-			desc->args[2], desc->args[3]);
-
 	ret = __scm_smc_call_legacy(&mdesc, &res, false);
 
 	desc->ret[0] = res.result[0];
@@ -157,10 +151,6 @@ static inline int scm_call2_noretry(u32 smc_id, struct scm_desc *desc)
 	 * error as "unsupported" (e.g. the qseecom listener smcinvoke probe)
 	 * test for it explicitly at their own site.
 	 */
-	if (SCM_OWNER_ID(smc_id) == 50 || SCM_OWNER_ID(smc_id) == 48)
-		pr_info("snapshot43 qsee_ret  pid=%d smc=%08x -> %d ret0=0x%llx ret1=0x%llx ret2=0x%llx\n",
-			current->pid, smc_id, ret, res.result[0],
-			res.result[1], res.result[2]);
 	return ret;
 }
 
