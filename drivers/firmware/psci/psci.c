@@ -166,6 +166,8 @@ static u32 psci_0_2_get_version(void)
 	return invoke_psci_fn(PSCI_0_2_FN_PSCI_VERSION, 0, 0, 0);
 }
 
+static int psci_features(u32 psci_func_id);
+
 int psci_set_osi_mode(bool enable)
 {
 	unsigned long suspend_mode;
@@ -175,6 +177,18 @@ int psci_set_osi_mode(bool enable)
 			PSCI_1_0_SUSPEND_MODE_PC;
 
 	err = invoke_psci_fn(PSCI_1_0_FN_SET_SUSPEND_MODE, suspend_mode, 0, 0);
+
+	/*
+	 * Some firmware advertises OS-initiated suspend in the CPU_SUSPEND
+	 * features without implementing SET_SUSPEND_MODE: it only ever runs
+	 * OS-initiated, so there is no mode to switch.
+	 */
+	if (enable && err == PSCI_RET_NOT_SUPPORTED &&
+	    psci_features(PSCI_1_0_FN_SET_SUSPEND_MODE) == PSCI_RET_NOT_SUPPORTED) {
+		pr_info("SET_SUSPEND_MODE not implemented, assuming OSI mode\n");
+		return 0;
+	}
+
 	if (err < 0)
 		pr_info(FW_BUG "failed to set %s mode: %d\n",
 				enable ? "OSI" : "PC", err);
