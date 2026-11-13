@@ -1115,6 +1115,34 @@ static int get_prop_batt_voltage_max_design(struct smbchg_chip *chip)
 	return uv;
 }
 
+static int get_prop_batt_capacity_level(struct smbchg_chip *chip)
+{
+	int capacity = get_prop_batt_capacity(chip);
+
+	if (get_prop_batt_status(chip) == POWER_SUPPLY_STATUS_FULL)
+		return POWER_SUPPLY_CAPACITY_LEVEL_FULL;
+	if (capacity <= 5)
+		return POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
+	if (capacity <= 15)
+		return POWER_SUPPLY_CAPACITY_LEVEL_LOW;
+
+	return POWER_SUPPLY_CAPACITY_LEVEL_NORMAL;
+}
+
+/* Fuel gauge properties the battery supply reports unchanged. */
+static int get_prop_batt_from_fg(struct smbchg_chip *chip,
+				 enum power_supply_property prop,
+				 union power_supply_propval *val)
+{
+	if (!chip->bms_psy && chip->bms_psy_name)
+		chip->bms_psy =
+			power_supply_get_by_name((char *)chip->bms_psy_name);
+	if (!chip->bms_psy)
+		return -ENODATA;
+
+	return power_supply_get_property(chip->bms_psy, prop, val);
+}
+
 static int get_prop_batt_health(struct smbchg_chip *chip)
 {
 	if (chip->batt_hot)
@@ -5733,6 +5761,7 @@ static enum power_supply_property smbchg_battery_properties[] = {
 	POWER_SUPPLY_PROP_CHARGING_ENABLED,
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
 	POWER_SUPPLY_PROP_CAPACITY,
+	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_FLASH_CURRENT_MAX,
@@ -5745,6 +5774,10 @@ static enum power_supply_property smbchg_battery_properties[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_RESISTANCE_ID,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+	POWER_SUPPLY_PROP_CYCLE_COUNT,
+	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
+	POWER_SUPPLY_PROP_MODEL_NAME,
 	POWER_SUPPLY_PROP_SAFETY_TIMER_ENABLE,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_MAX,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED,
@@ -5940,6 +5973,17 @@ static int smbchg_battery_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = get_prop_batt_capacity(chip);
 		break;
+	case POWER_SUPPLY_PROP_CAPACITY_LEVEL:
+		val->intval = get_prop_batt_capacity_level(chip);
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+	case POWER_SUPPLY_PROP_CYCLE_COUNT:
+	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
+		return get_prop_batt_from_fg(chip, prop, val);
+	case POWER_SUPPLY_PROP_MODEL_NAME:
+		return get_prop_batt_from_fg(chip,
+					     POWER_SUPPLY_PROP_BATTERY_TYPE,
+					     val);
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		val->intval = get_prop_batt_current_now(chip);
 		val->intval *= (-1);

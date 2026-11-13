@@ -4559,6 +4559,7 @@ static enum power_supply_property fg_power_props[] = {
 	POWER_SUPPLY_PROP_UPDATE_NOW,
 	POWER_SUPPLY_PROP_ESR_COUNT,
 	POWER_SUPPLY_PROP_VOLTAGE_MIN,
+	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
 	POWER_SUPPLY_PROP_CYCLE_COUNT,
 	POWER_SUPPLY_PROP_CYCLE_COUNT_ID,
 	POWER_SUPPLY_PROP_HI_POWER,
@@ -4641,6 +4642,9 @@ static int fg_power_get_property(struct power_supply *psy,
             val->intval = (int)vbatt_low_sts;
         else
             val->intval = 1;
+        break;
+    case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
+        val->intval = settings[FG_MEM_CUTOFF_VOLTAGE].value * 1000;
         break;
     case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
 #if IS_ENABLED(CONFIG_OF)
