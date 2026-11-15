@@ -2852,7 +2852,7 @@ int wcn36xx_smd_trigger_ba(struct wcn36xx *wcn, u8 sta_index, u16 tid, u16 *ssn)
 out:
 	mutex_unlock(&wcn->hal_mutex);
 
-	if (ssn)
+	if (!ret && ssn)
 		*ssn = ba_info[tid].starting_seq_num;
 
 	return ret;
