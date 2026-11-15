@@ -79,6 +79,10 @@ unsigned int sysctl_sched_latency			= 6000000ULL;
 EXPORT_SYMBOL_GPL(sysctl_sched_latency);
 #ifdef CONFIG_SCHED_BORE
 #include <linux/sched/bore.h>
+#else
+/* BORE exports reweight_entity(); without it the function stays local. */
+static void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
+			    unsigned long weight);
 #endif /* CONFIG_SCHED_BORE */
 
 /*
