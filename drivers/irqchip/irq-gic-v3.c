@@ -1522,13 +1522,22 @@ static int gic_v3_suspend(void)
 	return 0;
 }
 
-static struct syscore_ops gic_syscore_ops = {
-	.suspend = gic_v3_suspend,
+static int gic_syscore_suspend(void *data)
+{
+	return gic_v3_suspend();
+}
+
+static const struct syscore_ops gic_syscore_ops = {
+	.suspend = gic_syscore_suspend,
+};
+
+static struct syscore gic_syscore = {
+	.ops = &gic_syscore_ops,
 };
 
 static void gic_syscore_init(void)
 {
-	register_syscore_ops(&gic_syscore_ops);
+	register_syscore(&gic_syscore);
 }
 
 #else
