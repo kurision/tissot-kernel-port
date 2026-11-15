@@ -269,10 +269,9 @@ static int pviommu_set_dev_pasid(struct iommu_domain *domain,
 	return ret;
 }
 
-static int pviommu_attach_dev(struct iommu_domain *domain, struct device *dev)
+static int pviommu_attach_dev(struct iommu_domain *domain, struct device *dev,
+			      struct iommu_domain *old)
 {
-	struct iommu_domain *old = iommu_get_domain_for_dev(dev);
-
 	return pviommu_set_dev_pasid(domain, dev, 0, old);
 }
 
