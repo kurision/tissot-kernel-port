@@ -1127,6 +1127,9 @@ static int wcn36xx_add_interface(struct ieee80211_hw *hw,
 
 	mutex_lock(&wcn->conf_mutex);
 
+#if IS_ENABLED(CONFIG_IPV6)
+	vif_priv->ns_offload_slots = 0;
+#endif
 	vif_priv->bss_index = WCN36XX_HAL_BSS_INVALID_IDX;
 	INIT_LIST_HEAD(&vif_priv->sta_list);
 	list_add(&vif_priv->list, &wcn->vif_list);
@@ -1385,26 +1388,30 @@ static void wcn36xx_ipv6_addr_change(struct ieee80211_hw *hw,
 				     struct ieee80211_vif *vif,
 				     struct inet6_dev *idev)
 {
+	struct wcn36xx *wcn = hw->priv;
 	struct wcn36xx_vif *vif_priv = wcn36xx_vif_to_priv(vif);
 	struct inet6_ifaddr *ifa;
+	int scope;
 	int idx = 0;
 
-	memset(vif_priv->tentative_addrs, 0, sizeof(vif_priv->tentative_addrs));
-
 	read_lock_bh(&idev->lock);
+	spin_lock(&wcn->ipv6_lock);
 	list_for_each_entry(ifa, &idev->addr_list, if_list) {
-		vif_priv->target_ipv6_addrs[idx] = ifa->addr;
-		if (ifa->flags & IFA_F_TENTATIVE)
-			__set_bit(idx, vif_priv->tentative_addrs);
-		idx++;
+		if (ifa->flags & (IFA_F_TENTATIVE | IFA_F_DADFAILED))
+			continue;
+		scope = ipv6_addr_src_scope(&ifa->addr);
+		if (scope != IPV6_ADDR_SCOPE_LINKLOCAL &&
+		    scope != IPV6_ADDR_SCOPE_GLOBAL)
+			continue;
 		if (idx >= WCN36XX_HAL_IPV6_OFFLOAD_ADDR_MAX)
 			break;
-		wcn36xx_dbg(WCN36XX_DBG_MAC, "%pI6 %s\n", &ifa->addr,
-			    (ifa->flags & IFA_F_TENTATIVE) ? "tentative" : NULL);
+		vif_priv->target_ipv6_addrs[idx] = ifa->addr;
+		idx++;
+		wcn36xx_dbg(WCN36XX_DBG_MAC, "%pI6\n", &ifa->addr);
 	}
-	read_unlock_bh(&idev->lock);
-
 	vif_priv->num_target_ipv6_addrs = idx;
+	spin_unlock(&wcn->ipv6_lock);
+	read_unlock_bh(&idev->lock);
 }
 #endif
 
@@ -1736,6 +1743,9 @@ static int wcn36xx_probe(struct platform_device *pdev)
 	mutex_init(&wcn->conf_mutex);
 	mutex_init(&wcn->hal_mutex);
 	mutex_init(&wcn->scan_lock);
+#if IS_ENABLED(CONFIG_IPV6)
+	spin_lock_init(&wcn->ipv6_lock);
+#endif
 	__skb_queue_head_init(&wcn->amsdu);
 
 	wcn->hal_buf = devm_kmalloc(wcn->dev, WCN36XX_HAL_BUF_SIZE, GFP_KERNEL);

@@ -3523,7 +3523,7 @@ struct wcn36xx_hal_rem_bcn_filter_req {
 	(WCN36XX_HAL_OFFLOAD_ENABLE | WCN36XX_HAL_OFFLOAD_MCAST_FILTER_ENABLE)
 #define WCN36XX_HAL_OFFLOAD_ARP_AND_BCAST_FILTER_ENABLE	\
 	(WCN36XX_HAL_OFFLOAD_ENABLE | WCN36XX_HAL_OFFLOAD_BCAST_FILTER_ENABLE)
-#define WCN36XX_HAL_IPV6_OFFLOAD_ADDR_MAX		0x02
+#define WCN36XX_HAL_IPV6_OFFLOAD_ADDR_MAX		4
 
 struct wcn36xx_hal_ns_offload_params {
 	u8 src_ipv6_addr[WCN36XX_HAL_IPV6_ADDR_LEN];
@@ -3542,9 +3542,16 @@ struct wcn36xx_hal_ns_offload_params {
 	/* make it DWORD aligned */
 	u8 reserved2;
 
-	/* slot index for this offload */
-	u32 slot_index;
-	u8 bss_index;
+	union {
+		struct {
+			u32 slot_index;
+			u8 bss_index;
+		} __packed legacy;
+		struct {
+			u8 bss_index;
+			u32 slot_index;
+		} __packed pronto;
+	};
 } __packed;
 
 struct wcn36xx_hal_host_offload_req {

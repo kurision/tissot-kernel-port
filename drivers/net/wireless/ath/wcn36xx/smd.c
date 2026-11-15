@@ -21,6 +21,7 @@
 #include <linux/firmware.h>
 #include <linux/bitops.h>
 #include <linux/rpmsg.h>
+#include <net/addrconf.h>
 #include "smd.h"
 #include "firmware.h"
 
@@ -2075,6 +2076,9 @@ int wcn36xx_smd_delete_bss(struct wcn36xx *wcn, struct ieee80211_vif *vif)
 	vif_priv->bss_index = WCN36XX_HAL_BSS_INVALID_IDX;
 	vif_priv->mfp = false;
 	vif_priv->igtk_mask = 0;
+#if IS_ENABLED(CONFIG_IPV6)
+	vif_priv->ns_offload_slots = 0;
+#endif
 out:
 	mutex_unlock(&wcn->hal_mutex);
 	return ret;
@@ -3183,6 +3187,20 @@ out:
 	return ret;
 }
 
+static void wcn36xx_smd_set_ns_offload_slot(struct wcn36xx *wcn,
+					    struct wcn36xx_hal_ns_offload_params *params,
+					    u8 bss_index, u32 slot_index)
+{
+	/* Firmware 1.5.1.2 puts the BSS index before the slot index. */
+	if (wcn36xx_is_fw_version(wcn, 1, 5, 1, 2)) {
+		params->pronto.bss_index = bss_index;
+		params->pronto.slot_index = slot_index;
+	} else {
+		params->legacy.slot_index = slot_index;
+		params->legacy.bss_index = bss_index;
+	}
+}
+
 int wcn36xx_smd_arp_offload(struct wcn36xx *wcn, struct ieee80211_vif *vif,
 			    bool enable)
 {
@@ -3201,7 +3219,8 @@ int wcn36xx_smd_arp_offload(struct wcn36xx *wcn, struct ieee80211_vif *vif,
 		memcpy(&msg_body.host_offload_params.u,
 		       &vif->cfg.arp_addr_list[0], sizeof(__be32));
 	}
-	msg_body.ns_offload_params.bss_index = vif_priv->bss_index;
+	wcn36xx_smd_set_ns_offload_slot(wcn, &msg_body.ns_offload_params,
+					vif_priv->bss_index, 0);
 
 	PREPARE_HAL_BUF(wcn->hal_buf, msg_body);
 
@@ -3221,55 +3240,94 @@ out:
 }
 
 #if IS_ENABLED(CONFIG_IPV6)
-int wcn36xx_smd_ipv6_ns_offload(struct wcn36xx *wcn, struct ieee80211_vif *vif,
-				bool enable)
+static int wcn36xx_smd_ipv6_ns_offload_slot(struct wcn36xx *wcn,
+					    struct ieee80211_vif *vif,
+					    const struct in6_addr *addr, u32 slot)
 {
 	struct wcn36xx_vif *vif_priv = wcn36xx_vif_to_priv(vif);
 	struct wcn36xx_hal_host_offload_req_msg msg_body;
 	struct wcn36xx_hal_ns_offload_params *ns_params;
 	struct wcn36xx_hal_host_offload_req *ho_params;
+	struct in6_addr solicited;
 	int ret;
-
-	mutex_lock(&wcn->hal_mutex);
 
 	INIT_HAL_MSG(msg_body, WCN36XX_HAL_HOST_OFFLOAD_REQ);
 	ho_params = &msg_body.host_offload_params;
 	ns_params = &msg_body.ns_offload_params;
 
 	ho_params->offload_type = WCN36XX_HAL_IPV6_NS_OFFLOAD;
-	if (enable) {
+	if (addr) {
 		ho_params->enable =
 			WCN36XX_HAL_OFFLOAD_NS_AND_MCAST_FILTER_ENABLE;
-		if (vif_priv->num_target_ipv6_addrs) {
-			memcpy(&ho_params->u,
-			       &vif_priv->target_ipv6_addrs[0].in6_u,
-			       sizeof(struct in6_addr));
-			memcpy(&ns_params->target_ipv6_addr1,
-			       &vif_priv->target_ipv6_addrs[0].in6_u,
-			       sizeof(struct in6_addr));
-			ns_params->target_ipv6_addr1_valid = 1;
-		}
-		if (vif_priv->num_target_ipv6_addrs > 1) {
-			memcpy(&ns_params->target_ipv6_addr2,
-			       &vif_priv->target_ipv6_addrs[1].in6_u,
-			       sizeof(struct in6_addr));
-			ns_params->target_ipv6_addr2_valid = 1;
-		}
+		memcpy(&ho_params->u, addr, sizeof(*addr));
+		memcpy(ns_params->target_ipv6_addr1, addr, sizeof(*addr));
+		ns_params->target_ipv6_addr1_valid = 1;
+		addrconf_addr_solict_mult(addr, &solicited);
+		memcpy(ns_params->self_ipv6_addr, &solicited, sizeof(solicited));
 	}
 	memcpy(&ns_params->self_addr, vif->addr, ETH_ALEN);
-	ns_params->bss_index = vif_priv->bss_index;
+	wcn36xx_smd_set_ns_offload_slot(wcn, ns_params, vif_priv->bss_index, slot);
 
 	PREPARE_HAL_BUF(wcn->hal_buf, msg_body);
 
 	ret = wcn36xx_smd_send_and_wait(wcn, msg_body.header.len);
 	if (ret) {
-		wcn36xx_err("Sending host_offload_arp failed\n");
-		goto out;
+		wcn36xx_err("Sending IPv6 NS offload slot %u failed: %d\n",
+			    slot, ret);
+		return ret;
 	}
 	ret = wcn36xx_smd_rsp_status_check(wcn->hal_buf, wcn->hal_rsp_len);
-	if (ret) {
-		wcn36xx_err("host_offload_arp failed err=%d\n", ret);
+	if (ret)
+		wcn36xx_err("IPv6 NS offload slot %u failed: %d\n", slot, ret);
+
+	return ret;
+}
+
+static int wcn36xx_smd_clear_ipv6_ns_offload(struct wcn36xx *wcn,
+					     struct ieee80211_vif *vif)
+{
+	struct wcn36xx_vif *vif_priv = wcn36xx_vif_to_priv(vif);
+	int slot, err, ret = 0;
+
+	for_each_set_bit(slot, &vif_priv->ns_offload_slots,
+			 WCN36XX_HAL_IPV6_OFFLOAD_ADDR_MAX) {
+		err = wcn36xx_smd_ipv6_ns_offload_slot(wcn, vif, NULL, slot);
+		if (err) {
+			if (!ret)
+				ret = err;
+			continue;
+		}
+		__clear_bit(slot, &vif_priv->ns_offload_slots);
+	}
+
+	return ret;
+}
+
+int wcn36xx_smd_ipv6_ns_offload(struct wcn36xx *wcn, struct ieee80211_vif *vif,
+				bool enable)
+{
+	struct wcn36xx_vif *vif_priv = wcn36xx_vif_to_priv(vif);
+	struct in6_addr addrs[WCN36XX_HAL_IPV6_OFFLOAD_ADDR_MAX];
+	int count, slot, ret;
+
+	mutex_lock(&wcn->hal_mutex);
+	ret = wcn36xx_smd_clear_ipv6_ns_offload(wcn, vif);
+	if (ret || !enable)
 		goto out;
+
+	spin_lock_bh(&wcn->ipv6_lock);
+	count = vif_priv->num_target_ipv6_addrs;
+	memcpy(addrs, vif_priv->target_ipv6_addrs, sizeof(addrs));
+	spin_unlock_bh(&wcn->ipv6_lock);
+
+	for (slot = 0; slot < count; slot++) {
+		/* A missing response can still leave the slot enabled in firmware. */
+		__set_bit(slot, &vif_priv->ns_offload_slots);
+		ret = wcn36xx_smd_ipv6_ns_offload_slot(wcn, vif, &addrs[slot], slot);
+		if (ret) {
+			wcn36xx_smd_clear_ipv6_ns_offload(wcn, vif);
+			goto out;
+		}
 	}
 out:
 	mutex_unlock(&wcn->hal_mutex);

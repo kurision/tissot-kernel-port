@@ -148,8 +148,8 @@ struct wcn36xx_vif {
 #if IS_ENABLED(CONFIG_IPV6)
 	/* IPv6 addresses for WoWLAN */
 	struct in6_addr target_ipv6_addrs[WCN36XX_HAL_IPV6_OFFLOAD_ADDR_MAX];
-	unsigned long tentative_addrs[BITS_TO_LONGS(WCN36XX_HAL_IPV6_OFFLOAD_ADDR_MAX)];
 	int num_target_ipv6_addrs;
+	unsigned long ns_offload_slots;
 #endif
 	/* WoWLAN GTK rekey data */
 	struct {
@@ -249,6 +249,10 @@ struct wcn36xx {
 
 	/* prevents concurrent FW reconfiguration */
 	struct mutex		conf_mutex;
+#if IS_ENABLED(CONFIG_IPV6)
+	/* Protects address snapshots against IPv6 notifier callbacks. */
+	spinlock_t		ipv6_lock;
+#endif
 
 	/*
 	 * smd_buf must be protected with smd_mutex to garantee
