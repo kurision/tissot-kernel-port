@@ -236,6 +236,7 @@ struct wcn36xx {
 	/* IRQs */
 	int			tx_irq;
 	int			rx_irq;
+	bool			rx_irq_wake;
 	void __iomem		*ccu_base;
 	void __iomem		*dxe_base;
 

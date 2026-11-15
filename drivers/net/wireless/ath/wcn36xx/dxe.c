@@ -573,7 +573,10 @@ static int wcn36xx_dxe_request_irqs(struct wcn36xx *wcn)
 		goto out_txirq;
 	}
 
-	enable_irq_wake(wcn->rx_irq);
+	ret = enable_irq_wake(wcn->rx_irq);
+	if (ret)
+		wcn36xx_warn("failed to enable rx irq wake: %d\n", ret);
+	wcn->rx_irq_wake = !ret;
 
 	return 0;
 
@@ -1077,6 +1080,11 @@ void wcn36xx_dxe_deinit(struct wcn36xx *wcn)
 	wcn36xx_dxe_disable_ch_int(wcn, WCN36XX_INT_MASK_CHAN_RX_L);
 	wcn36xx_dxe_disable_ch_int(wcn, WCN36XX_INT_MASK_CHAN_TX_H);
 	wcn36xx_dxe_disable_ch_int(wcn, WCN36XX_INT_MASK_CHAN_TX_L);
+
+	if (wcn->rx_irq_wake) {
+		disable_irq_wake(wcn->rx_irq);
+		wcn->rx_irq_wake = false;
+	}
 
 	free_irq(wcn->tx_irq, wcn);
 	free_irq(wcn->rx_irq, wcn);
