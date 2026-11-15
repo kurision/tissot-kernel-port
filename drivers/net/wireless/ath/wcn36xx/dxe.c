@@ -313,22 +313,6 @@ static int wcn36xx_dxe_fill_skb(struct device *dev,
 	return 0;
 }
 
-static int wcn36xx_dxe_ch_alloc_skb(struct wcn36xx *wcn,
-				    struct wcn36xx_dxe_ch *wcn_ch)
-{
-	int i;
-	struct wcn36xx_dxe_ctl *cur_ctl = NULL;
-
-	cur_ctl = wcn_ch->head_blk_ctl;
-
-	for (i = 0; i < wcn_ch->desc_num; i++) {
-		wcn36xx_dxe_fill_skb(wcn->dev, cur_ctl, GFP_KERNEL);
-		cur_ctl = cur_ctl->next;
-	}
-
-	return 0;
-}
-
 static void wcn36xx_dxe_ch_free_skbs(struct wcn36xx *wcn,
 				     struct wcn36xx_dxe_ch *wcn_ch)
 {
@@ -336,9 +320,32 @@ static void wcn36xx_dxe_ch_free_skbs(struct wcn36xx *wcn,
 	int i;
 
 	for (i = 0; i < wcn_ch->desc_num; i++) {
-		kfree_skb(cur->skb);
+		if (cur->skb) {
+			dma_unmap_single(wcn->dev, cur->desc->dst_addr_l,
+					 WCN36XX_PKT_SIZE, DMA_FROM_DEVICE);
+			kfree_skb(cur->skb);
+			cur->skb = NULL;
+		}
 		cur = cur->next;
 	}
+}
+
+static int wcn36xx_dxe_ch_alloc_skb(struct wcn36xx *wcn,
+				    struct wcn36xx_dxe_ch *wcn_ch)
+{
+	struct wcn36xx_dxe_ctl *cur_ctl = wcn_ch->head_blk_ctl;
+	int i, ret;
+
+	for (i = 0; i < wcn_ch->desc_num; i++) {
+		ret = wcn36xx_dxe_fill_skb(wcn->dev, cur_ctl, GFP_KERNEL);
+		if (ret) {
+			wcn36xx_dxe_ch_free_skbs(wcn, wcn_ch);
+			return ret;
+		}
+		cur_ctl = cur_ctl->next;
+	}
+
+	return 0;
 }
 
 void wcn36xx_dxe_tx_ack_ind(struct wcn36xx *wcn, u32 status)
@@ -965,7 +972,11 @@ int wcn36xx_dxe_init(struct wcn36xx *wcn)
 	}
 
 	/* For RX we need to preallocated buffers */
-	wcn36xx_dxe_ch_alloc_skb(wcn, &wcn->dxe_rx_l_ch);
+	ret = wcn36xx_dxe_ch_alloc_skb(wcn, &wcn->dxe_rx_l_ch);
+	if (ret) {
+		dev_err(wcn->dev, "Error allocating RX buffers\n");
+		goto out_err_rxl_skb;
+	}
 
 	/* Write channel head to a NEXT register */
 	wcn36xx_dxe_write_register(wcn, WCN36XX_DXE_CH_NEXT_DESC_ADDR_RX_L,
@@ -996,7 +1007,11 @@ int wcn36xx_dxe_init(struct wcn36xx *wcn)
 	}
 
 	/* For RX we need to prealocat buffers */
-	wcn36xx_dxe_ch_alloc_skb(wcn, &wcn->dxe_rx_h_ch);
+	ret = wcn36xx_dxe_ch_alloc_skb(wcn, &wcn->dxe_rx_h_ch);
+	if (ret) {
+		dev_err(wcn->dev, "Error allocating RX buffers\n");
+		goto out_err_rxh_skb;
+	}
 
 	/* Write chanel head to a NEXT register */
 	wcn36xx_dxe_write_register(wcn, WCN36XX_DXE_CH_NEXT_DESC_ADDR_RX_H,
@@ -1032,8 +1047,18 @@ int wcn36xx_dxe_init(struct wcn36xx *wcn)
 	return 0;
 
 out_err_irq:
+	/* Both RX channels are enabled; stop DMA before unmapping buffers */
+	wcn36xx_dxe_write_register(wcn, WCN36XX_DXE_REG_CSR_RESET,
+				   WCN36XX_DXE_REG_RESET);
+	wcn36xx_dxe_ch_free_skbs(wcn, &wcn->dxe_rx_h_ch);
+out_err_rxh_skb:
 	wcn36xx_dxe_deinit_descs(wcn->dev, &wcn->dxe_rx_h_ch);
 out_err_rxh_ch:
+	/* The low priority RX channel is enabled from here on */
+	wcn36xx_dxe_write_register(wcn, WCN36XX_DXE_REG_CSR_RESET,
+				   WCN36XX_DXE_REG_RESET);
+	wcn36xx_dxe_ch_free_skbs(wcn, &wcn->dxe_rx_l_ch);
+out_err_rxl_skb:
 	wcn36xx_dxe_deinit_descs(wcn->dev, &wcn->dxe_rx_l_ch);
 out_err_rxl_ch:
 	wcn36xx_dxe_deinit_descs(wcn->dev, &wcn->dxe_tx_h_ch);
