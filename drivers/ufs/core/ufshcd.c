@@ -7428,7 +7428,7 @@ static irqreturn_t ufshcd_sl_intr(struct ufs_hba *hba, u32 intr_status)
 }
 
 /**
- * ufshcd_threaded_intr - Threaded interrupt service routine
+ * ufshcd_intr - Main interrupt service routine
  * @irq: irq number
  * @__hba: pointer to adapter instance
  *
@@ -7436,7 +7436,7 @@ static irqreturn_t ufshcd_sl_intr(struct ufs_hba *hba, u32 intr_status)
  *  IRQ_HANDLED - If interrupt is valid
  *  IRQ_NONE    - If invalid interrupt
  */
-static irqreturn_t ufshcd_threaded_intr(int irq, void *__hba)
+static irqreturn_t ufshcd_intr(int irq, void *__hba)
 {
 	u32 last_intr_status, intr_status, enabled_intr_status = 0;
 	irqreturn_t retval = IRQ_NONE;
@@ -7473,47 +7473,6 @@ static irqreturn_t ufshcd_threaded_intr(int irq, void *__hba)
 	}
 
 	return retval;
-}
-
-/**
- * ufshcd_intr - Main interrupt service routine
- * @irq: irq number
- * @__hba: pointer to adapter instance
- *
- * Return:
- *  IRQ_HANDLED     - If interrupt is valid
- *  IRQ_WAKE_THREAD - If handling is moved to threaded handled
- *  IRQ_NONE        - If invalid interrupt
- */
-static irqreturn_t ufshcd_intr(int irq, void *__hba)
-{
-	struct ufs_hba *hba = __hba;
-	u32 intr_status, enabled_intr_status;
-	bool use_threaded = true;
-
-	/*
-	 * Allow vendor to opt out of the threaded interrupt handler and
-	 * process the interrupt directly in the primary handler instead.
-	 */
-	trace_android_vh_ufs_use_threaded_intr(hba, &use_threaded);
-	if (!use_threaded)
-		return ufshcd_threaded_intr(irq, __hba);
-
-	/*
-	 * Handle interrupt in thread if MCQ or ESI is disabled,
-	 * and no active UIC command.
-	 */
-	if ((!hba->mcq_enabled || !hba->mcq_esi_enabled) &&
-	    !hba->active_uic_cmd)
-		return IRQ_WAKE_THREAD;
-
-	intr_status = ufshcd_readl(hba, REG_INTERRUPT_STATUS);
-	enabled_intr_status = intr_status & ufshcd_readl(hba, REG_INTERRUPT_ENABLE);
-
-	ufshcd_writel(hba, intr_status, REG_INTERRUPT_STATUS);
-
-	/* Directly handle interrupts since MCQ ESI handlers does the hard job */
-	return ufshcd_sl_intr(hba, enabled_intr_status);
 }
 
 static int ufshcd_clear_tm_cmd(struct ufs_hba *hba, int tag)
@@ -10180,6 +10139,7 @@ static int __ufshcd_wl_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 			req_link_state == UIC_LINK_ACTIVE_STATE) {
 		ufshcd_disable_auto_bkops(hba);
 		flush_work(&hba->eeh_work);
+		cancel_delayed_work_sync(&hba->ufs_rtc_update_work);
 		goto vops_suspend;
 	}
 
@@ -10389,9 +10349,10 @@ static int __ufshcd_wl_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 		if (ret)
 			goto set_old_link_state;
 		ufshcd_set_timestamp_attr(hba);
-		schedule_delayed_work(&hba->ufs_rtc_update_work,
-				      msecs_to_jiffies(UFS_RTC_UPDATE_INTERVAL_MS));
 	}
+
+	schedule_delayed_work(&hba->ufs_rtc_update_work,
+			      msecs_to_jiffies(UFS_RTC_UPDATE_INTERVAL_MS));
 
 	if (ufshcd_keep_autobkops_enabled_except_suspend(hba))
 		ufshcd_enable_auto_bkops(hba);
@@ -11151,8 +11112,7 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 	ufshcd_readl(hba, REG_INTERRUPT_ENABLE);
 
 	/* IRQ registration */
-	err = devm_request_threaded_irq(dev, irq, ufshcd_intr, ufshcd_threaded_intr,
-					IRQF_ONESHOT | IRQF_SHARED, UFSHCD, hba);
+	err = devm_request_irq(dev, irq, ufshcd_intr, IRQF_SHARED, UFSHCD, hba);
 	if (err) {
 		dev_err(hba->dev, "request irq failed\n");
 		goto out_release;
