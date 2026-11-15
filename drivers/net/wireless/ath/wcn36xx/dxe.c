@@ -294,20 +294,20 @@ static int wcn36xx_dxe_fill_skb(struct device *dev,
 {
 	struct wcn36xx_dxe_desc *dxe = ctl->desc;
 	struct sk_buff *skb;
+	dma_addr_t addr;
 
 	skb = alloc_skb(WCN36XX_PKT_SIZE, gfp);
 	if (skb == NULL)
 		return -ENOMEM;
 
-	dxe->dst_addr_l = dma_map_single(dev,
-					 skb_tail_pointer(skb),
-					 WCN36XX_PKT_SIZE,
-					 DMA_FROM_DEVICE);
-	if (dma_mapping_error(dev, dxe->dst_addr_l)) {
+	addr = dma_map_single(dev, skb_tail_pointer(skb), WCN36XX_PKT_SIZE,
+			      DMA_FROM_DEVICE);
+	if (dma_mapping_error(dev, addr)) {
 		dev_err(dev, "unable to map skb\n");
 		kfree_skb(skb);
 		return -ENOMEM;
 	}
+	dxe->dst_addr_l = addr;
 	ctl->skb = skb;
 
 	return 0;
