@@ -9499,6 +9499,8 @@ simple:
 idle:
 	if (rf) {
 		new_tasks = sched_balance_newidle(rq, rf);
+		/* The donor may have changed while the rq lock was dropped. */
+		prev = rq->donor;
 
 		/*
 		 * Because sched_balance_newidle() releases (and re-acquires)
