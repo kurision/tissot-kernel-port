@@ -2024,8 +2024,12 @@ static int qup_i2c_suspend_noirq(struct device *device)
 static int qup_i2c_resume_noirq(struct device *device)
 {
 	struct qup_i2c_dev *qup = dev_get_drvdata(device);
+	int ret;
 
-	qup_i2c_pm_resume_runtime(device);
+	ret = qup_i2c_pm_resume_runtime(device);
+	if (ret)
+		return ret;
+
 	pm_runtime_set_active(device);
 	i2c_mark_adapter_resumed(&qup->adap);
 	return 0;
@@ -2033,13 +2037,10 @@ static int qup_i2c_resume_noirq(struct device *device)
 
 static int qup_i2c_resume(struct device *device)
 {
-	int ret;
-
-	ret = qup_i2c_pm_resume_runtime(device);
-	if (ret)
-		return ret;
-
-	/* Runtime PM is enabled again; let the controller idle. */
+	/*
+	 * The noirq phase has already turned the clocks back on. Runtime PM
+	 * is enabled again; let the controller idle.
+	 */
 	pm_runtime_mark_last_busy(device);
 	pm_request_autosuspend(device);
 	return 0;
