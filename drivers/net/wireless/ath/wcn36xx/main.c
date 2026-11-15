@@ -1221,17 +1221,19 @@ static int wcn36xx_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wow)
 	if (vif) {
 		ret = wcn36xx_smd_arp_offload(wcn, vif, true);
 		if (ret)
-			goto out;
+			goto out_disable_arp;
 		ret = wcn36xx_smd_ipv6_ns_offload(wcn, vif, true);
 		if (ret)
-			goto out;
+			goto out_disable_ns;
 		ret = wcn36xx_smd_gtk_offload(wcn, vif, true);
 		if (ret)
-			goto out;
+			goto out_disable_gtk;
 		ret = wcn36xx_smd_set_power_params(wcn, true);
 		if (ret)
-			goto out;
+			goto out_disable_power;
 		ret = wcn36xx_smd_wlan_host_suspend_ind(wcn);
+		if (ret)
+			goto out_disable_power;
 	}
 
 	/* Disable IRQ, we don't want to handle any packet before mac80211 is
@@ -1239,7 +1241,16 @@ static int wcn36xx_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wow)
 	 */
 	disable_irq(wcn->tx_irq);
 	disable_irq(wcn->rx_irq);
+	goto out;
 
+out_disable_power:
+	wcn36xx_smd_set_power_params(wcn, false);
+out_disable_gtk:
+	wcn36xx_smd_gtk_offload(wcn, vif, false);
+out_disable_ns:
+	wcn36xx_smd_ipv6_ns_offload(wcn, vif, false);
+out_disable_arp:
+	wcn36xx_smd_arp_offload(wcn, vif, false);
 out:
 	mutex_unlock(&wcn->conf_mutex);
 	return ret;
