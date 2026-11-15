@@ -1315,7 +1315,9 @@ static int wcn36xx_ampdu_action(struct ieee80211_hw *hw,
 			ret = session;
 			goto out;
 		}
-		wcn36xx_smd_add_ba(wcn, session);
+		ret = wcn36xx_smd_add_ba(wcn, session);
+		if (ret > 0)
+			ret = -EIO;
 		break;
 	case IEEE80211_AMPDU_RX_STOP:
 		wcn36xx_smd_del_ba(wcn, tid, 0, get_sta_index(vif, sta_priv));
@@ -1327,14 +1329,27 @@ static int wcn36xx_ampdu_action(struct ieee80211_hw *hw,
 
 		/* Replace the mac80211 ssn with the firmware one */
 		wcn36xx_dbg(WCN36XX_DBG_MAC, "mac ampdu ssn = %u\n", *ssn);
-		wcn36xx_smd_trigger_ba(wcn, get_sta_index(vif, sta_priv), tid, ssn);
-		wcn36xx_dbg(WCN36XX_DBG_MAC, "mac ampdu fw-ssn = %u\n", *ssn);
+		ret = wcn36xx_smd_trigger_ba(wcn, get_sta_index(vif, sta_priv),
+					     tid, ssn);
+		/* A firmware status would read as a positive start result */
+		if (ret > 0)
+			ret = -EIO;
+		if (!ret) {
+			wcn36xx_dbg(WCN36XX_DBG_MAC, "mac ampdu fw-ssn = %u\n",
+				    *ssn);
 
-		/* Start BA session */
-		session = wcn36xx_smd_add_ba_session(wcn, sta, tid, ssn, 1,
-						     get_sta_index(vif, sta_priv));
-		if (session < 0) {
-			ret = session;
+			/* Start BA session */
+			session = wcn36xx_smd_add_ba_session(wcn, sta, tid,
+							     ssn, 1,
+							     get_sta_index(vif, sta_priv));
+			if (session < 0)
+				ret = session;
+		}
+		if (ret) {
+			/* Let the TX path request a session again later */
+			spin_lock_bh(&sta_priv->ampdu_lock);
+			sta_priv->ampdu_state[tid] = WCN36XX_AMPDU_NONE;
+			spin_unlock_bh(&sta_priv->ampdu_lock);
 			goto out;
 		}
 		ret = IEEE80211_AMPDU_TX_START_IMMEDIATE;
