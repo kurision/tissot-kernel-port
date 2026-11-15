@@ -1,6 +1,6 @@
 # Written by porting/tools/bore-sync.py record; do not edit.
 patch 0001-linux6.18.48-bore-7.0.0.patch
-ccc62f79d3915cdb0661a44ab315e3dafca9f9bb361f4764ce865a27c57c27c0  include/linux/sched.h
+ed614a79eb4230fd298171531ad5e60a850cb2038518d7c27fc80d2d476eb012  include/linux/sched.h
 afc472f2d315bf382115fe1219595da6ec97b1941dc75bee0d3a5f70d9f389c8  include/linux/sched/bore.h
 8d6f8a7a664b7f8505403dba81524769d3ee6ade78b1b6bd705c174b07778966  init/Kconfig
 2bd751fa885cc9d47787f98635b49f539719012726adb9f746f339e08254d222  kernel/Kconfig.hz
