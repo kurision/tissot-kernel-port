@@ -11,7 +11,9 @@
 #include <linux/io.h>
 #include <linux/irqchip.h>
 #include <linux/irqdomain.h>
+#include <linux/ktime.h>
 #include <linux/mailbox_client.h>
+#include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -21,6 +23,11 @@
 #include <linux/slab.h>
 #include <linux/soc/qcom/irq.h>
 #include <linux/spinlock.h>
+#include <linux/suspend.h>
+#include <linux/timekeeping.h>
+
+#include <asm/arch_timer.h>
+#include <clocksource/arm_arch_timer.h>
 
 /*
  * This is the driver for Qualcomm MPM (MSM Power Manager) interrupt controller,
@@ -292,11 +299,41 @@ static irqreturn_t qcom_mpm_handler(int irq, void *dev_id)
 	return ret;
 }
 
+/*
+ * TIMER0/TIMER1 hold the absolute arch timer count at which the MPM wakes the
+ * AP, all ones for no timer. The RPM arms the MPM timer from them when it
+ * takes over the vMPM, so a power collapse that turns off the GIC still ends
+ * in time for the next timer event of any CPU in the domain.
+ */
+static void mpm_write_next_wakeup(struct qcom_mpm_priv *priv)
+{
+	struct generic_pm_domain *genpd = &priv->genpd;
+	u64 cycles = U64_MAX;
+	s64 delta_ns;
+
+	/* With timekeeping suspended only a wakeup interrupt ends the sleep. */
+	if (!genpd->gd || idle_should_enter_s2idle() ||
+	    system_state == SYSTEM_SUSPEND)
+		goto out;
+
+	delta_ns = max(ktime_to_ns(ktime_sub(genpd->gd->next_hrtimer,
+					     ktime_get())), 0LL);
+	cycles = arch_timer_read_counter() +
+		 mul_u64_u32_div(delta_ns, arch_timer_get_cntfrq(),
+				 NSEC_PER_SEC);
+out:
+	writel_relaxed(lower_32_bits(cycles), priv->base);
+	writel_relaxed(upper_32_bits(cycles), priv->base + 4);
+}
+
 static int mpm_pd_power_off(struct generic_pm_domain *genpd)
 {
 	struct qcom_mpm_priv *priv = container_of(genpd, struct qcom_mpm_priv,
 						  genpd);
 	int i, ret;
+
+	/* The STATUS writes below order these before the mailbox doorbell. */
+	mpm_write_next_wakeup(priv);
 
 	for (i = 0; i < priv->reg_stride; i++)
 		qcom_mpm_write(priv, MPM_REG_STATUS, i, 0);
@@ -326,6 +363,7 @@ static int qcom_mpm_probe(struct platform_device *pdev, struct device_node *pare
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct device *dev = &pdev->dev;
+	struct dev_power_governor *gov = NULL;
 	struct irq_domain *parent_domain;
 	struct generic_pm_domain *genpd;
 	struct device_node *msgram_np;
@@ -423,7 +461,16 @@ static int qcom_mpm_probe(struct platform_device *pdev, struct device_node *pare
 	if (!genpd->name)
 		return -ENOMEM;
 
-	ret = pm_genpd_init(genpd, NULL, false);
+#if IS_ENABLED(CONFIG_PM_GENERIC_DOMAINS) && IS_ENABLED(CONFIG_CPU_IDLE)
+	/*
+	 * The CPU governor records the next timer event of the CPUs below this
+	 * domain, which mpm_pd_power_off() hands to the RPM.
+	 */
+	genpd->flags |= GENPD_FLAG_CPU_DOMAIN;
+	gov = &pm_domain_cpu_gov;
+#endif
+
+	ret = pm_genpd_init(genpd, gov, false);
 	if (ret) {
 		dev_err(dev, "failed to init genpd: %d\n", ret);
 		return ret;
