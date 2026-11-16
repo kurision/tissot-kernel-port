@@ -109,8 +109,14 @@ jobs:
               printf '\n**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$PREV" "$TAG"
             } >> "$NOTES"
           fi
+          # Name the assets after the tag so downloads stay distinguishable.
+          ASSETS="$RUNNER_TEMP/release-assets"
+          NAME="ack-tissot-${TAG//\//-}"
+          mkdir -p "$ASSETS"
+          cp "$SNAPSHOT/ack-tissot-release.zip" "$ASSETS/$NAME.zip"
+          cp "$SNAPSHOT/package-release.json" "$ASSETS/$NAME.json"
           gh release create "$TAG" --verify-tag \
             --title "$TAG" \
             --prerelease \
             --notes-file "$NOTES" \
-            "$SNAPSHOT/ack-tissot-release.zip" "$SNAPSHOT/package-release.json"
+            "$ASSETS/$NAME.zip" "$ASSETS/$NAME.json"
