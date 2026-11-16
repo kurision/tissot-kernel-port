@@ -59,14 +59,24 @@
 			/*
 			 * System power collapse, entered by the last CPU once both
 			 * clusters are down: core, L2 and system power collapse
-			 * at affinity level 2. Timings from CAF msm8953-pm.dtsi.
+			 * at affinity level 2. Timings from CAF msm8953-pm.dtsi,
+			 * except the residency.
+			 *
+			 * In this state only MPM pins wake the SoC, and the MPM
+			 * wakeup timer does not yet bring it back for an idle
+			 * entry, so an interrupt outside the MPM map (the QUP I2C
+			 * completion) waits for the next unrelated wakeup. The
+			 * maximum residency (about 71 minutes) keeps cpuidle out
+			 * of the state: any transfer in flight has a timeout timer
+			 * well before that. s2idle picks the deepest domain state
+			 * without the governor and still uses it.
 			 */
 			tissot_system_sleep: system-sleep-0 {
 				compatible = "domain-idle-state";
 				arm,psci-suspend-param = <0x42000353>;
 				entry-latency-us = <644>;
 				exit-latency-us = <11027>;
-				min-residency-us = <7500>;
+				min-residency-us = <0xffffffff>;
 			};
 		};
 
