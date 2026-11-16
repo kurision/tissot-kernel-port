@@ -55,6 +55,19 @@
 				exit-latency-us = <423>;
 				min-residency-us = <3561>;
 			};
+
+			/*
+			 * System power collapse, entered by the last CPU once both
+			 * clusters are down: core, L2 and system power collapse
+			 * at affinity level 2. Timings from CAF msm8953-pm.dtsi.
+			 */
+			tissot_system_sleep: system-sleep-0 {
+				compatible = "domain-idle-state";
+				arm,psci-suspend-param = <0x42000353>;
+				entry-latency-us = <644>;
+				exit-latency-us = <11027>;
+				min-residency-us = <7500>;
+			};
 		};
 
 		idle-states {
@@ -84,13 +97,21 @@
 	};
 
 	psci {
+		tissot_system_pd: power-domain-system {
+			#power-domain-cells = <0>;
+			power-domains = <&mpm>;
+			domain-idle-states = <&tissot_system_sleep>;
+		};
+
 		tissot_cluster_pd0: power-domain-cluster0 {
 			#power-domain-cells = <0>;
+			power-domains = <&tissot_system_pd>;
 			domain-idle-states = <&tissot_cluster_sleep_0>;
 		};
 
 		tissot_cluster_pd1: power-domain-cluster1 {
 			#power-domain-cells = <0>;
+			power-domains = <&tissot_system_pd>;
 			domain-idle-states = <&tissot_cluster_sleep_1>;
 		};
 
