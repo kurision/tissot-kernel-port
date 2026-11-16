@@ -4,6 +4,7 @@
  *
  * Copyright (C) 2011 Rafael J. Wysocki <rjw@sisk.pl>, Renesas Electronics Corp.
  */
+#include <linux/export.h>
 #include <linux/kernel.h>
 #include <linux/pm_domain.h>
 #include <linux/pm_qos.h>
@@ -432,6 +433,7 @@ struct dev_power_governor pm_domain_cpu_gov = {
 	.suspend_ok = default_suspend_ok,
 	.power_down_ok = cpu_power_down_ok,
 };
+EXPORT_SYMBOL_GPL(pm_domain_cpu_gov);
 #endif
 
 struct dev_power_governor simple_qos_governor = {
