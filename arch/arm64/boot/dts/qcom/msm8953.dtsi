@@ -2086,6 +2086,13 @@
 			status = "disabled";
 		};
 
+		/* IMEM cookie holding the TrustZone diagnostic area address */
+		tz_log: tz-log@8600720 {
+			compatible = "qcom,tz-log";
+			reg = <0x08600720 0x2000>;
+			status = "disabled";
+		};
+
 		wcnss: remoteproc@a204000 {
 			compatible = "qcom,pronto-v3-pil", "qcom,pronto";
 			reg = <0x0a204000 0x2000>, <0x0a202000 0x1000>, <0x0a21b000 0x3000>;
