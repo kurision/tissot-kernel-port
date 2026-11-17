@@ -3,13 +3,11 @@
  */
 
 #include <linux/delay.h>
-#include <linux/err.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/io.h>
 #include <linux/of.h>
-#include <linux/platform_device.h>
-#include <linux/module.h>
+#include <linux/of_address.h>
 #include <linux/reboot.h>
 #include <linux/pm.h>
 #include <linux/pstore_ram.h>
@@ -25,33 +23,29 @@ static int do_msm_poweroff(struct sys_off_data *data)
 	return NOTIFY_DONE;
 }
 
-static int msm_restart_probe(struct platform_device *pdev)
+/*
+ * Register from an early initcall instead of a platform driver: on some
+ * firmware PSCI SYSTEM_RESET returns without resetting, and a panic raised
+ * before device initcalls would otherwise find no restart handler at all.
+ */
+static int __init msm_restart_init(void)
 {
-	msm_ps_hold = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(msm_ps_hold))
-		return PTR_ERR(msm_ps_hold);
+	struct device_node *np;
 
-	devm_register_sys_off_handler(&pdev->dev, SYS_OFF_MODE_RESTART,
-				      128, do_msm_poweroff, NULL);
+	np = of_find_compatible_node(NULL, NULL, "qcom,pshold");
+	if (!np)
+		return 0;
 
-	devm_register_sys_off_handler(&pdev->dev, SYS_OFF_MODE_POWER_OFF,
-				      SYS_OFF_PRIO_DEFAULT, do_msm_poweroff,
-				      NULL);
+	msm_ps_hold = of_iomap(np, 0);
+	of_node_put(np);
+	if (!msm_ps_hold)
+		return -ENOMEM;
+
+	register_sys_off_handler(SYS_OFF_MODE_RESTART, 128, do_msm_poweroff,
+				 NULL);
+	register_sys_off_handler(SYS_OFF_MODE_POWER_OFF, SYS_OFF_PRIO_DEFAULT,
+				 do_msm_poweroff, NULL);
 
 	return 0;
 }
-
-static const struct of_device_id of_msm_restart_match[] = {
-	{ .compatible = "qcom,pshold", },
-	{},
-};
-MODULE_DEVICE_TABLE(of, of_msm_restart_match);
-
-static struct platform_driver msm_restart_driver = {
-	.probe = msm_restart_probe,
-	.driver = {
-		.name = "msm-restart",
-		.of_match_table = of_match_ptr(of_msm_restart_match),
-	},
-};
-builtin_platform_driver(msm_restart_driver);
+early_initcall(msm_restart_init);
