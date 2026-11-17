@@ -74,4 +74,17 @@ config QCOM_QSEECOM_UEFISECAPP
 	  Select Y here to provide access to EFI variables on the aforementioned
 	  platforms.
 
+config MSM_TZ_LOG
+	tristate "Qualcomm TrustZone diagnostic log"
+	depends on QCOM_SCM && DEBUG_FS
+	help
+	  Read-only debugfs access to the diagnostic area that the Qualcomm
+	  TrustZone firmware keeps: its log ring buffer and its per-CPU
+	  boot, reset and interrupt statistics. The files appear under
+	  tzdbg/ in debugfs. The area is located through the IMEM cookie
+	  described by a "qcom,tz-log" device tree node.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called tz_log.
+
 endmenu
