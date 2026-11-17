@@ -946,6 +946,13 @@ static int qup_i2c_wait_for_complete(struct qup_i2c_dev *qup,
 
 	left = wait_for_completion_timeout(&qup->xfer, timeout);
 	if (!left) {
+		/* The reset below clears the state that shows where it stopped. */
+		dev_err_ratelimited(qup->dev,
+				    "transfer to 0x%02x timed out: state %#x i2c_status %#x operational %#x error %#x\n",
+				    msg->addr, readl(qup->base + QUP_STATE),
+				    readl(qup->base + QUP_I2C_STATUS),
+				    readl(qup->base + QUP_OPERATIONAL),
+				    readl(qup->base + QUP_ERROR_FLAGS));
 		writel(1, qup->base + QUP_SW_RESET);
 		ret = -ETIMEDOUT;
 	}
