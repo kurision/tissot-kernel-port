@@ -775,6 +775,23 @@ static int spmi_haptics_play_effect(struct input_dev *dev, void *data,
 	struct spmi_haptics *haptics = input_get_drvdata(dev);
 	u32 vmax_mv;
 
+	if (effect->type == FF_CONSTANT) {
+		/*
+		 * ff-memless folds constant effects into x and y force
+		 * components in u.ramp. The actuator has no direction, so any
+		 * force plays it at the board vmax, and none stops it.
+		 */
+		if (effect->u.ramp.start_level || effect->u.ramp.end_level) {
+			WRITE_ONCE(haptics->play_vmax, haptics->vmax);
+			atomic_set(&haptics->active, 1);
+		} else {
+			atomic_set(&haptics->active, 0);
+		}
+		schedule_work(&haptics->work);
+
+		return 0;
+	}
+
 	dev_dbg(haptics->dev, "%s: Rumbling with strong: %d and weak: %d", __func__,
 		effect->u.rumble.strong_magnitude, effect->u.rumble.weak_magnitude);
 
@@ -944,12 +961,19 @@ static int spmi_haptics_probe(struct platform_device *pdev)
 
 	haptics->haptics_input_dev = input_dev;
 
-	input_dev->name = "spmi_haptics";
+	/*
+	 * Qualcomm's vibrator HAL (vendor/qcom/opensource/vibrator) only
+	 * opens FF input devices with one of a fixed list of names, and
+	 * plays on()/off() as FF_CONSTANT effects. Use the name of the CAF
+	 * qti-haptics driver for the same PMIC peripheral.
+	 */
+	input_dev->name = "qti-haptics";
 	input_dev->id.version = 1;
 	input_dev->close = spmi_haptics_close;
 	input_set_drvdata(input_dev, haptics);
 	// Figure out how to make this FF_PERIODIC
 	input_set_capability(haptics->haptics_input_dev, EV_FF, FF_RUMBLE);
+	input_set_capability(haptics->haptics_input_dev, EV_FF, FF_CONSTANT);
 
 	ret = input_ff_create_memless(input_dev, NULL, spmi_haptics_play_effect);
 	if (ret)
