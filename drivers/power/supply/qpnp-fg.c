@@ -3032,18 +3032,30 @@ out:
 	mutex_unlock(&chip->cyc_ctr.lock);
 }
 
+/*
+ * Each bucket counts the charges that passed through its SOC band, so a
+ * single bucket only moves when the battery is charged through that band.
+ * cycle_count_id 0 reports the average over all buckets as the overall
+ * charge cycle count; 1 to BUCKET_COUNT report a single bucket.
+ */
 static int fg_get_cycle_count(struct fg_chip *chip)
 {
-	int count;
+	int count = 0, i;
 
 	if (!chip->cyc_ctr.en)
 		return 0;
 
-	if ((chip->cyc_ctr.id <= 0) || (chip->cyc_ctr.id > BUCKET_COUNT))
+	if (chip->cyc_ctr.id < 0 || chip->cyc_ctr.id > BUCKET_COUNT)
 		return -EINVAL;
 
 	mutex_lock(&chip->cyc_ctr.lock);
-	count = chip->cyc_ctr.count[chip->cyc_ctr.id - 1];
+	if (chip->cyc_ctr.id) {
+		count = chip->cyc_ctr.count[chip->cyc_ctr.id - 1];
+	} else {
+		for (i = 0; i < BUCKET_COUNT; i++)
+			count += chip->cyc_ctr.count[i];
+		count /= BUCKET_COUNT;
+	}
 	mutex_unlock(&chip->cyc_ctr.lock);
 	return count;
 }
@@ -4805,7 +4817,7 @@ static int fg_power_set_property(struct power_supply *psy,
 		}
 		break;
 	case POWER_SUPPLY_PROP_CYCLE_COUNT_ID:
-		if ((val->intval > 0) && (val->intval <= BUCKET_COUNT)) {
+		if (val->intval >= 0 && val->intval <= BUCKET_COUNT) {
 			chip->cyc_ctr.id = val->intval;
 		} else {
 			pr_err("rejecting invalid cycle_count_id = %d\n",
@@ -7154,8 +7166,6 @@ static int fg_of_init(struct fg_chip *chip)
 
 	chip->cyc_ctr.en = of_property_read_bool(node,
 				"qcom,cycle-counter-en");
-	if (chip->cyc_ctr.en)
-		chip->cyc_ctr.id = 1;
 
 	chip->esr_pulse_tune_en = of_property_read_bool(node,
 					"qcom,esr-pulse-tuning-en");
