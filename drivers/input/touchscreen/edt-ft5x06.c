@@ -375,6 +375,14 @@ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
 		unsigned int gesture;
 
 		error = regmap_read(tsdata->regmap, EDT_GESTURE_OUTPUT, &gesture);
+		/*
+		 * The controller can hold SCL on the first read after a gesture
+		 * wake; the adapter resets on the timeout, so read once more
+		 * rather than lose the wake.
+		 */
+		if (error == -ETIMEDOUT)
+			error = regmap_read(tsdata->regmap, EDT_GESTURE_OUTPUT,
+					    &gesture);
 		if (error) {
 			dev_err_ratelimited(dev, "Unable to read gesture: %d\n", error);
 		} else if (gesture == EDT_GESTURE_DOUBLE_TAP) {
