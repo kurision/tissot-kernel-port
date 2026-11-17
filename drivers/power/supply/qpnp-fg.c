@@ -4966,14 +4966,10 @@ static int fg_power_get_property(struct power_supply *psy,
 #endif
             val->intval = chip->nom_cap_uah;
         break;
-    case POWER_SUPPLY_PROP_CHARGE_FULL:
-#if IS_ENABLED(CONFIG_OF)
-        if (of_machine_is_compatible("xiaomi,tissot"))
-            val->intval = 3080000;
-        else
-#endif
-            val->intval = chip->learning_data.learned_cc_uah;
-        break;
+	case POWER_SUPPLY_PROP_CHARGE_FULL:
+		val->intval = chip->learning_data.learned_cc_uah ?:
+			      chip->nom_cap_uah;
+		break;
     case POWER_SUPPLY_PROP_CHARGE_NOW:
         val->intval = chip->learning_data.cc_uah;
         break;
