@@ -24,7 +24,6 @@
 #include <linux/time.h>
 #include <linux/types.h>
 
-
 #define HAP_STATUS_1_REG		0x0A
 #define HAP_BUSY_BIT			BIT(1)
 #define SC_FLAG_BIT			BIT(3)
@@ -192,7 +191,7 @@ struct spmi_haptics {
 	u32 wave_samp[HAP_WAVE_SAMP_SET_LEN];
 	u8 brake_pat[HAP_BRAKE_PAT_LEN];
 
-	struct mutex play_lock;
+	struct mutex play_lock; /* serialises hardware play state updates */
 };
 
 static inline bool is_secure_addr(u16 addr)
@@ -201,7 +200,7 @@ static inline bool is_secure_addr(u16 addr)
 }
 
 static int spmi_haptics_read(struct spmi_haptics *haptics,
-	u16 addr, u8 *val, int len)
+			     u16 addr, u8 *val, int len)
 {
 	int ret;
 
@@ -222,7 +221,8 @@ static int spmi_haptics_write(struct spmi_haptics *haptics,
 			dev_dbg(haptics->dev, "%s: unlocking for addr: 0x%x, val: 0x%x", __func__,
 				addr, val[i]);
 			ret = regmap_write(haptics->regmap,
-				haptics->base + HAP_SEC_ACCESS_REG, HAP_SEC_ACCESS_UNLOCK);
+					   haptics->base + HAP_SEC_ACCESS_REG,
+					   HAP_SEC_ACCESS_UNLOCK);
 			if (ret < 0) {
 				dev_err(haptics->dev, "Error writing unlock code, ret %d\n",
 					ret);
@@ -251,13 +251,14 @@ static int spmi_haptics_write(struct spmi_haptics *haptics,
 }
 
 static int spmi_haptics_write_masked(struct spmi_haptics *haptics,
-	u16 addr, u8 mask, u8 val)
+				     u16 addr, u8 mask, u8 val)
 {
 	int ret;
 
 	if (is_secure_addr(addr)) {
 		ret = regmap_write(haptics->regmap,
-			haptics->base + HAP_SEC_ACCESS_REG, HAP_SEC_ACCESS_UNLOCK);
+				   haptics->base + HAP_SEC_ACCESS_REG,
+				   HAP_SEC_ACCESS_UNLOCK);
 		if (ret < 0) {
 			dev_err(haptics->dev, "Error writing unlock code - ret %d\n", ret);
 			return ret;
@@ -277,7 +278,7 @@ static bool is_haptics_idle(struct spmi_haptics *haptics)
 	u8 val;
 
 	if (haptics->play_mode == HAP_PLAY_DIRECT ||
-			haptics->play_mode == HAP_PLAY_PWM)
+	    haptics->play_mode == HAP_PLAY_PWM)
 		return true;
 
 	ret = spmi_haptics_read(haptics, haptics->base + HAP_STATUS_1_REG, &val, 1);
@@ -312,9 +313,8 @@ static int spmi_haptics_write_vmax(struct spmi_haptics *haptics, u32 vmax_mv)
 {
 	u8 val = 0;
 
-	if (!vmax_mv) {
+	if (!vmax_mv)
 		vmax_mv = haptics->vmax;
-	}
 
 	vmax_mv = clamp_t(u32, vmax_mv, HAP_VMAX_MIN_MV, HAP_VMAX_MAX_MV);
 
@@ -352,7 +352,6 @@ static int spmi_haptics_write_play_mode(struct spmi_haptics *haptics)
 	val = FIELD_PREP(HAP_WF_SOURCE_MASK, haptics->play_mode);
 	return spmi_haptics_write_masked(haptics, haptics->base + HAP_SEL_REG,
 					 HAP_WF_SOURCE_MASK, val);
-
 }
 
 static int spmi_haptics_write_play_rate(struct spmi_haptics *haptics, u16 play_rate)
@@ -442,7 +441,7 @@ static int spmi_haptics_write_wave_repeat(struct spmi_haptics *haptics)
 }
 
 static int spmi_haptics_write_play_control(struct spmi_haptics *haptics,
-						enum hap_play_control ctrl)
+					   enum hap_play_control ctrl)
 {
 	u8 val;
 
@@ -527,7 +526,6 @@ static irqreturn_t spmi_haptics_sc_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-
 /**
  * spmi_haptics_init() - Initialise haptics hardware for use
  * @haptics: haptics device
@@ -540,7 +538,7 @@ static int spmi_haptics_init(struct spmi_haptics *haptics)
 	u16 play_rate;
 
 	ret = spmi_haptics_write_masked(haptics, haptics->base + HAP_CFG1_REG,
-		HAP_ACT_TYPE_MASK, haptics->actuator_type);
+					HAP_ACT_TYPE_MASK, haptics->actuator_type);
 	if (ret < 0)
 		return ret;
 
@@ -556,7 +554,7 @@ static int spmi_haptics_init(struct spmi_haptics *haptics)
 	mask = LRA_AUTO_RES_MODE_MASK | LRA_HIGH_Z_MASK | LRA_RES_CAL_MASK;
 
 	ret = spmi_haptics_write_masked(haptics, haptics->base + HAP_LRA_AUTO_RES_REG,
-			mask, val);
+					mask, val);
 
 	/* Configure the PLAY MODE register */
 	ret = spmi_haptics_write_play_mode(haptics);
@@ -574,13 +572,13 @@ static int spmi_haptics_init(struct spmi_haptics *haptics)
 
 	// Configure the debounce for short-circuit detection.
 	ret = spmi_haptics_write_masked(haptics, haptics->base + HAP_SC_DEB_REG,
-			HAP_SC_DEB_MASK, HAP_SC_DEB_CYCLES_MAX);
+					HAP_SC_DEB_MASK, HAP_SC_DEB_CYCLES_MAX);
 	if (ret < 0)
 		return ret;
 
 	// write the wave shape
 	ret = spmi_haptics_write_masked(haptics, haptics->base + HAP_CFG2_REG,
-			HAP_LRA_RES_TYPE_MASK, haptics->wave_shape);
+					HAP_LRA_RES_TYPE_MASK, haptics->wave_shape);
 	if (ret < 0)
 		return ret;
 
@@ -613,8 +611,9 @@ static int spmi_haptics_init(struct spmi_haptics *haptics)
 		dev_dbg(haptics->dev, "%s: Requesting play IRQ, irq: %d", __func__,
 			haptics->play_irq);
 		ret = devm_request_threaded_irq(haptics->dev, haptics->play_irq,
-			NULL, spmi_haptics_play_irq_handler, IRQF_ONESHOT,
-			"haptics_play_irq", haptics);
+						NULL, spmi_haptics_play_irq_handler,
+						IRQF_ONESHOT, "haptics_play_irq",
+						haptics);
 
 		if (ret < 0) {
 			dev_err(haptics->dev, "Unable to request play IRQ ret=%d\n", ret);
@@ -630,8 +629,9 @@ static int spmi_haptics_init(struct spmi_haptics *haptics)
 		dev_dbg(haptics->dev, "%s: Requesting play IRQ, irq: %d", __func__,
 			haptics->play_irq);
 		ret = devm_request_threaded_irq(haptics->dev, haptics->sc_irq,
-			NULL, spmi_haptics_sc_irq_handler, IRQF_ONESHOT,
-			"haptics_sc_irq", haptics);
+						NULL, spmi_haptics_sc_irq_handler,
+						IRQF_ONESHOT, "haptics_sc_irq",
+						haptics);
 
 		if (ret < 0) {
 			dev_err(haptics->dev, "Unable to request sc IRQ ret=%d\n", ret);
@@ -762,7 +762,7 @@ static void spmi_haptics_close(struct input_dev *dev)
  * Returns: 0 on success, < 0 on error
  */
 static int spmi_haptics_play_effect(struct input_dev *dev, void *data,
-					struct ff_effect *effect)
+				    struct ff_effect *effect)
 {
 	int ret = 0;
 	struct spmi_haptics *haptics = input_get_drvdata(dev);
@@ -942,8 +942,7 @@ static int spmi_haptics_probe(struct platform_device *pdev)
 	// Figure out how to make this FF_PERIODIC
 	input_set_capability(haptics->haptics_input_dev, EV_FF, FF_RUMBLE);
 
-	ret = input_ff_create_memless(input_dev, NULL,
-					spmi_haptics_play_effect);
+	ret = input_ff_create_memless(input_dev, NULL, spmi_haptics_play_effect);
 	if (ret) {
 		dev_err(&pdev->dev,
 			"couldn't register vibrator as FF device\n");

@@ -235,7 +235,7 @@ config INPUT_QCOM_SPMI_HAPTICS
 	  related PMICs. Based on the ff-memless interface.
 
 	  To compile this driver as module, choose M here: the
-	  module will be called qcom_spmi_haptics.
+	  module will be called qcom-spmi-haptics.
 
 config INPUT_SPARCSPKR
 	tristate "SPARC Speaker support"
