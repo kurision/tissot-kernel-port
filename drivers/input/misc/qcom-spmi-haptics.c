@@ -74,9 +74,8 @@
 
 #define HAP_SC_DEB_REG			0x53
 #define HAP_SC_DEB_MASK			GENMASK(2, 0)
-#define HAP_SC_DEB_CYCLES_MIN		0
-#define HAP_DEF_SC_DEB_CYCLES		8
-#define HAP_SC_DEB_CYCLES_MAX		32
+/* 0 disables the debounce, n > 0 debounces over 8 << (n - 1) cycles */
+#define HAP_SC_DEB_8_CYCLES		1
 
 #define HAP_RATE_CFG1_REG		0x54
 #define HAP_RATE_CFG1_MASK		GENMASK(7, 0)
@@ -159,6 +158,7 @@ enum hap_play_control {
  * @auto_res_mode: The auto resonance mode (none, zxd, qwd, max_qwd, zxd_eop)
  * @magnitude: The strength we should be playing at.
  * @vmax: Max voltage to use when playing.
+ * @play_vmax: Voltage for the effect being played, applied by @work.
  * @current_limit: The current limit for this hardware (400mA or 800mA).
  * @play_wave_rate: The wave rate to use for this hardware.
  * @wave_samp: The array of wave samples to write for buffer mode.
@@ -185,6 +185,7 @@ struct spmi_haptics {
 	u8 auto_res_mode;
 	int magnitude;
 	u32 vmax;
+	u32 play_vmax;
 	u32 current_limit;
 	u32 play_wave_rate;
 
@@ -555,6 +556,8 @@ static int spmi_haptics_init(struct spmi_haptics *haptics)
 
 	ret = spmi_haptics_write_masked(haptics, haptics->base + HAP_LRA_AUTO_RES_REG,
 					mask, val);
+	if (ret < 0)
+		return ret;
 
 	/* Configure the PLAY MODE register */
 	ret = spmi_haptics_write_play_mode(haptics);
@@ -572,7 +575,7 @@ static int spmi_haptics_init(struct spmi_haptics *haptics)
 
 	// Configure the debounce for short-circuit detection.
 	ret = spmi_haptics_write_masked(haptics, haptics->base + HAP_SC_DEB_REG,
-					HAP_SC_DEB_MASK, HAP_SC_DEB_CYCLES_MAX);
+					HAP_SC_DEB_MASK, HAP_SC_DEB_8_CYCLES);
 	if (ret < 0)
 		return ret;
 
@@ -655,9 +658,14 @@ static int spmi_haptics_enable(struct spmi_haptics *haptics)
 	mutex_lock(&haptics->play_lock);
 	if (haptics->sc_count > SC_MAX_COUNT) {
 		dev_err(haptics->dev, "Can't play while in short circuit");
-		ret = -1;
+		ret = -EIO;
 		goto out;
 	}
+
+	ret = spmi_haptics_write_vmax(haptics, READ_ONCE(haptics->play_vmax));
+	if (ret < 0)
+		goto out;
+
 	ret = spmi_haptics_set_auto_res(haptics, false);
 	if (ret < 0) {
 		dev_err(haptics->dev, "Error disabling auto_res, ret=%d\n", ret);
@@ -764,7 +772,6 @@ static void spmi_haptics_close(struct input_dev *dev)
 static int spmi_haptics_play_effect(struct input_dev *dev, void *data,
 				    struct ff_effect *effect)
 {
-	int ret = 0;
 	struct spmi_haptics *haptics = input_get_drvdata(dev);
 	u32 vmax_mv;
 
@@ -784,13 +791,17 @@ static int spmi_haptics_play_effect(struct input_dev *dev, void *data,
 
 	vmax_mv = ((haptics->vmax - HAP_VMAX_MIN_MV) * haptics->magnitude) / 100 +
 					HAP_VMAX_MIN_MV;
+	/* Never drive the actuator above the vmax the board allows */
+	vmax_mv = min(vmax_mv, haptics->vmax);
 
 	dev_dbg(haptics->dev, "%s: magnitude: %d, vmax: %d", __func__,
 		haptics->magnitude, vmax_mv);
 
-	ret = spmi_haptics_write_vmax(haptics, vmax_mv);
-	if (ret < 0)
-		return ret;
+	/*
+	 * Called from the ff-memless timer with the event lock held: leave
+	 * the register write to the work item, under the play lock.
+	 */
+	WRITE_ONCE(haptics->play_vmax, vmax_mv);
 
 end:
 	schedule_work(&haptics->work);
@@ -798,95 +809,88 @@ end:
 	return 0;
 }
 
+static void spmi_haptics_teardown(void *data)
+{
+	struct spmi_haptics *haptics = data;
+
+	disable_work_sync(&haptics->work);
+	spmi_haptics_disable(haptics);
+}
+
 static int spmi_haptics_probe(struct platform_device *pdev)
 {
+	struct device *dev = &pdev->dev;
+	struct device_node *node = dev->of_node;
+	u32 brake_pat[HAP_BRAKE_PAT_LEN] = { 0x3, 0x3, 0x2, 0x1 };
 	struct spmi_haptics *haptics;
-	struct device_node *node;
 	struct input_dev *input_dev;
 	int ret;
 	u32 val;
 	int i;
 
-	haptics = devm_kzalloc(&pdev->dev, sizeof(*haptics), GFP_KERNEL);
+	haptics = devm_kzalloc(dev, sizeof(*haptics), GFP_KERNEL);
 	if (!haptics)
 		return -ENOMEM;
 
-	haptics->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+	haptics->dev = dev;
+	platform_set_drvdata(pdev, haptics);
+
+	haptics->regmap = dev_get_regmap(dev->parent, NULL);
 	if (!haptics->regmap)
 		return -ENODEV;
 
-	node = pdev->dev.of_node;
-
-	haptics->dev = &pdev->dev;
-
 	ret = of_property_read_u32(node, "reg", &haptics->base);
-	if (ret < 0) {
-		dev_err(haptics->dev, "Couldn't find reg in node = %s ret = %d\n",
-			node->full_name, ret);
-		return ret;
-	}
+	if (ret < 0)
+		return dev_err_probe(dev, ret, "Couldn't read reg\n");
 
 	haptics->play_irq = platform_get_irq_byname(pdev, "play");
-	if (haptics->play_irq < 0) {
-		dev_err(&pdev->dev, "Unable to get play irq\n");
-		ret = haptics->play_irq;
-		goto register_fail;
-	}
+	if (haptics->play_irq < 0)
+		return haptics->play_irq;
 
 	haptics->sc_irq = platform_get_irq_byname(pdev, "short");
-	if (haptics->sc_irq < 0) {
-		dev_err(&pdev->dev, "Unable to get sc irq\n");
-		ret = haptics->sc_irq;
-		goto register_fail;
-	}
+	if (haptics->sc_irq < 0)
+		return haptics->sc_irq;
 
 	haptics->actuator_type = HAP_TYPE_LRA;
 	ret = of_property_read_u32(node, "qcom,actuator-type", &val);
 	if (!ret) {
-		if (val != HAP_TYPE_ERM && val != HAP_TYPE_LRA) {
-			dev_err(&pdev->dev, "qcom,actuator-type (%d) isn't supported\n", val);
-			ret = -EINVAL;
-			goto register_fail;
-		}
+		if (val != HAP_TYPE_ERM && val != HAP_TYPE_LRA)
+			return dev_err_probe(dev, -EINVAL,
+					     "qcom,actuator-type (%u) isn't supported\n",
+					     val);
 		haptics->actuator_type = val;
 	}
 
 	haptics->play_mode = HAP_PLAY_BUFFER;
 	ret = of_property_read_u32(node, "qcom,play-mode", &val);
 	if (!ret) {
-		if (val != HAP_PLAY_BUFFER && val != HAP_PLAY_DIRECT) {
-			dev_err(&pdev->dev, "qcom,play-mode (%d) isn't supported\n", val);
-			ret = -EINVAL;
-			goto register_fail;
-		}
+		if (val != HAP_PLAY_BUFFER && val != HAP_PLAY_DIRECT)
+			return dev_err_probe(dev, -EINVAL,
+					     "qcom,play-mode (%u) isn't supported\n",
+					     val);
 		haptics->play_mode = val;
 	}
 
 	haptics->vmax = HAP_VMAX_MAX_MV;
 	ret = of_property_read_u32(node, "qcom,vmax-millivolt", &val);
-	if (!ret) {
-		haptics->vmax = val;
-	} else if (ret != -EINVAL) {
-		dev_err(haptics->dev, "Unable to read vmax ret=%d\n", ret);
-		goto register_fail;
-	}
+	if (!ret)
+		haptics->vmax = clamp_t(u32, val, HAP_VMAX_MIN_MV, HAP_VMAX_MAX_MV);
+	else if (ret != -EINVAL)
+		return dev_err_probe(dev, ret, "Unable to read vmax\n");
+	haptics->play_vmax = haptics->vmax;
 
 	haptics->auto_res_mode = HAP_AUTO_RES_ZXD_EOP;
 	ret = of_property_read_u32(node, "qcom,auto-res-mode", &val);
-	if (!ret) {
+	if (!ret)
 		haptics->auto_res_mode = val;
-	} else if (ret != -EINVAL) {
-		dev_err(haptics->dev, "Unable to read auto res mode ret=%d\n", ret);
-		goto register_fail;
-	}
+	else if (ret != -EINVAL)
+		return dev_err_probe(dev, ret, "Unable to read auto res mode\n");
 
 	ret = of_property_read_u32(node, "qcom,wave-play-rate-us", &val);
-	if (!ret) {
+	if (!ret)
 		haptics->play_wave_rate = val;
-	} else if (ret != -EINVAL) {
-		dev_err(haptics->dev, "Unable to read play rate ret=%d\n", ret);
-		goto register_fail;
-	}
+	else if (ret != -EINVAL)
+		return dev_err_probe(dev, ret, "Unable to read play rate\n");
 
 	haptics->play_wave_rate =
 		clamp_t(u32, haptics->play_wave_rate,
@@ -895,44 +899,49 @@ static int spmi_haptics_probe(struct platform_device *pdev)
 	haptics->wave_shape = HAP_WAVE_SINE;
 	ret = of_property_read_u32(node, "qcom,wave-shape", &val);
 	if (!ret) {
-		if (val != HAP_WAVE_SINE && val != HAP_WAVE_SQUARE) {
-			dev_err(&pdev->dev, "qcom,wave-shape is invalid: %d\n", val);
-			ret = -EINVAL;
-			goto register_fail;
-		}
+		if (val != HAP_WAVE_SINE && val != HAP_WAVE_SQUARE)
+			return dev_err_probe(dev, -EINVAL,
+					     "qcom,wave-shape is invalid: %u\n",
+					     val);
 		haptics->wave_shape = val;
 	}
 
-	haptics->brake_pat[0] = 0x3;
-	haptics->brake_pat[1] = 0x3;
-	haptics->brake_pat[2] = 0x2;
-	haptics->brake_pat[3] = 0x1;
+	/* The binding makes qcom,brake-pattern an array of four u32 cells */
+	ret = of_property_read_u32_array(node, "qcom,brake-pattern", brake_pat,
+					 HAP_BRAKE_PAT_LEN);
+	if (ret < 0 && ret != -EINVAL)
+		return dev_err_probe(dev, ret, "qcom,brake-pattern is invalid\n");
 
-	ret = of_property_read_u8_array(node, "qcom,brake-pattern", haptics->brake_pat, 4);
-	if (ret < 0 && ret != -EINVAL) {
-		dev_err(&pdev->dev, "qcom,brake-pattern is invalid, ret = %d\n", ret);
-		goto register_fail;
-	}
+	for (i = 0; i < HAP_BRAKE_PAT_LEN; i++)
+		haptics->brake_pat[i] = brake_pat[i];
 
 	haptics->current_limit = HAP_ILIM_400_MA;
 
 	for (i = 0; i < HAP_WAVE_SAMP_LEN; i++)
 		haptics->wave_samp[i] = HAP_WF_SAMP_MAX;
 
+	ret = devm_mutex_init(dev, &haptics->play_lock);
+	if (ret)
+		return ret;
+
+	INIT_WORK(&haptics->work, spmi_haptics_work);
+
+	/*
+	 * Registered before the input device, so it runs after the input
+	 * device is unregistered: close() may still queue the stop work.
+	 */
+	ret = devm_add_action_or_reset(dev, spmi_haptics_teardown, haptics);
+	if (ret)
+		return ret;
+
 	ret = spmi_haptics_init(haptics);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "Error initialising haptics, ret=%d\n",
-			ret);
-		goto register_fail;
-	}
+	if (ret < 0)
+		return dev_err_probe(dev, ret, "Error initialising haptics\n");
 
-	platform_set_drvdata(pdev, haptics);
-
-	input_dev = devm_input_allocate_device(&pdev->dev);
+	input_dev = devm_input_allocate_device(dev);
 	if (!input_dev)
 		return -ENOMEM;
 
-	INIT_WORK(&haptics->work, spmi_haptics_work);
 	haptics->haptics_input_dev = input_dev;
 
 	input_dev->name = "spmi_haptics";
@@ -943,28 +952,18 @@ static int spmi_haptics_probe(struct platform_device *pdev)
 	input_set_capability(haptics->haptics_input_dev, EV_FF, FF_RUMBLE);
 
 	ret = input_ff_create_memless(input_dev, NULL, spmi_haptics_play_effect);
-	if (ret) {
-		dev_err(&pdev->dev,
-			"couldn't register vibrator as FF device\n");
-		goto register_fail;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "couldn't register vibrator as FF device\n");
 
 	ret = input_register_device(input_dev);
-	if (ret) {
-		dev_err(&pdev->dev, "couldn't register input device\n");
-		goto register_fail;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret, "couldn't register input device\n");
 
 	return 0;
-
-register_fail:
-	cancel_work_sync(&haptics->work);
-	mutex_destroy(&haptics->play_lock);
-
-	return ret;
 }
 
-static int __maybe_unused spmi_haptics_suspend(struct device *dev)
+static int spmi_haptics_suspend(struct device *dev)
 {
 	struct spmi_haptics *haptics = dev_get_drvdata(dev);
 
@@ -974,16 +973,7 @@ static int __maybe_unused spmi_haptics_suspend(struct device *dev)
 	return 0;
 }
 
-static SIMPLE_DEV_PM_OPS(spmi_haptics_pm_ops, spmi_haptics_suspend, NULL);
-
-static void spmi_haptics_remove(struct platform_device *pdev)
-{
-	struct spmi_haptics *haptics = dev_get_drvdata(&pdev->dev);
-
-	cancel_work_sync(&haptics->work);
-	mutex_destroy(&haptics->play_lock);
-	input_unregister_device(haptics->haptics_input_dev);
-}
+static DEFINE_SIMPLE_DEV_PM_OPS(spmi_haptics_pm_ops, spmi_haptics_suspend, NULL);
 
 static void spmi_haptics_shutdown(struct platform_device *pdev)
 {
@@ -1002,11 +992,10 @@ MODULE_DEVICE_TABLE(of, spmi_haptics_match_table);
 
 static struct platform_driver spmi_haptics_driver = {
 	.probe		= spmi_haptics_probe,
-	.remove		= spmi_haptics_remove,
 	.shutdown	= spmi_haptics_shutdown,
 	.driver		= {
 		.name	= "spmi-haptics",
-		.pm	= &spmi_haptics_pm_ops,
+		.pm	= pm_sleep_ptr(&spmi_haptics_pm_ops),
 		.of_match_table = spmi_haptics_match_table,
 	},
 };
