@@ -168,6 +168,7 @@ struct edt_ft5x06_ts_data {
 	bool gesture_wakeup;
 	bool gesture_active;
 	bool irq_wake_enabled;
+	bool gesture_irq_held;
 	/* state_lock protects notifier intent, not I2C transactions. */
 	spinlock_t state_lock;
 	bool display_off;
@@ -1782,12 +1783,14 @@ static int edt_ft5x06_ts_suspend(struct device *dev)
 		if (tsdata->gesture_active) {
 			/*
 			 * A double tap that wakes the system is replayed when
-			 * device interrupts resume, before the I2C adapter can
-			 * transfer again, and the gesture read fails. Hold the
-			 * handler until resume; the line still wakes, as the
-			 * GPIO chip re-enables disabled wake IRQs on suspend.
+			 * the handler is enabled again. Hold the handler until
+			 * the whole system has resumed, so the gesture read
+			 * runs after every device, the I2C adapter included,
+			 * is back; the line still wakes, as the GPIO chip
+			 * re-enables disabled wake IRQs on suspend.
 			 */
 			disable_irq(client->irq);
+			tsdata->gesture_irq_held = true;
 			return 0;
 		}
 	}
@@ -1837,10 +1840,9 @@ static int edt_ft5x06_ts_resume(struct device *dev)
 	struct edt_ft5x06_ts_data *tsdata = i2c_get_clientdata(client);
 	int ret = 0;
 
-	if (tsdata->gesture_wakeup && tsdata->gesture_active) {
-		enable_irq(client->irq);
+	/* The gesture IRQ is released in complete(). */
+	if (tsdata->gesture_wakeup && tsdata->gesture_active)
 		goto unblock;
-	}
 
 	if (!tsdata->gesture_wakeup && device_may_wakeup(dev))
 		goto unblock;
@@ -1905,8 +1907,25 @@ unblock:
 	return ret;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(edt_ft5x06_ts_pm_ops,
-				edt_ft5x06_ts_suspend, edt_ft5x06_ts_resume);
+static void edt_ft5x06_ts_complete(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct edt_ft5x06_ts_data *tsdata = i2c_get_clientdata(client);
+
+	/*
+	 * complete() also runs when the system suspend was aborted before
+	 * this device suspended, so release only an IRQ that suspend held.
+	 */
+	if (tsdata->gesture_irq_held) {
+		tsdata->gesture_irq_held = false;
+		enable_irq(client->irq);
+	}
+}
+
+static const struct dev_pm_ops edt_ft5x06_ts_pm_ops = {
+	SYSTEM_SLEEP_PM_OPS(edt_ft5x06_ts_suspend, edt_ft5x06_ts_resume)
+	.complete = pm_sleep_ptr(edt_ft5x06_ts_complete),
+};
 
 static const struct edt_i2c_chip_data edt_ft5x06_data = {
 	.max_support_points = 5,
