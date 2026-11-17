@@ -179,6 +179,7 @@ struct fg_cyc_ctr_data {
 	bool			started[BUCKET_COUNT];
 	u16			count[BUCKET_COUNT];
 	u8			last_soc[BUCKET_COUNT];
+	int			last_bucket;
 	int			id;
 	struct mutex		lock;
 };
@@ -2970,6 +2971,8 @@ static int fg_inc_store_cycle_ctr(struct fg_chip *chip, int bucket)
 	return rc;
 }
 
+static bool is_input_present(struct fg_chip *chip);
+
 static void update_cycle_count(struct work_struct *work)
 {
 	int rc = 0, bucket, i;
@@ -2986,46 +2989,39 @@ static void update_cycle_count(struct work_struct *work)
 		goto out;
 	}
 	batt_soc = reg[2];
+	bucket = batt_soc / BUCKET_SOC_PCT;
 
+	if (fg_debug_mask & FG_STATUS)
+		pr_info("batt_soc: %x bucket: %d\n", batt_soc, bucket);
+
+	/*
+	 * A charge marks every bucket it passes through as started. The
+	 * buckets are counted once the charge ends, by termination or by
+	 * removing the input, and only those whose SOC rose by at least half
+	 * a bucket since they started, so short top-ups do not add cycles.
+	 * The bucket counted last is not restarted, which keeps a full
+	 * battery that is topped up repeatedly from counting it again.
+	 */
 	if (chip->status == POWER_SUPPLY_STATUS_CHARGING) {
-		/* Find out which bucket the SOC falls in */
-		bucket = batt_soc / BUCKET_SOC_PCT;
-
-		if (fg_debug_mask & FG_STATUS)
-			pr_info("batt_soc: %x bucket: %d\n", reg[2], bucket);
-
-		/*
-		 * If we've started counting for the previous bucket,
-		 * then store the counter for that bucket if the
-		 * counter for current bucket is getting started.
-		 */
-		if (bucket > 0 && chip->cyc_ctr.started[bucket - 1] &&
-			!chip->cyc_ctr.started[bucket]) {
-			rc = fg_inc_store_cycle_ctr(chip, bucket - 1);
-			if (rc) {
-				pr_err("Error in storing cycle_ctr rc: %d\n",
-					rc);
-				goto out;
-			} else {
-				chip->cyc_ctr.started[bucket - 1] = false;
-				chip->cyc_ctr.last_soc[bucket - 1] = 0;
-			}
-		}
-		if (!chip->cyc_ctr.started[bucket]) {
+		if (!chip->cyc_ctr.started[bucket] &&
+		    bucket != chip->cyc_ctr.last_bucket) {
 			chip->cyc_ctr.started[bucket] = true;
 			chip->cyc_ctr.last_soc[bucket] = batt_soc;
 		}
-	} else {
+	} else if (chip->charge_done || !is_input_present(chip)) {
 		for (i = 0; i < BUCKET_COUNT; i++) {
-			if (chip->cyc_ctr.started[i] &&
-				batt_soc > chip->cyc_ctr.last_soc[i]) {
-				rc = fg_inc_store_cycle_ctr(chip, i);
-				if (rc)
-					pr_err("Error in storing cycle_ctr rc: %d\n",
-						rc);
-				chip->cyc_ctr.last_soc[i] = 0;
-			}
+			if (!chip->cyc_ctr.started[i] ||
+			    batt_soc <= chip->cyc_ctr.last_soc[i] +
+					BUCKET_SOC_PCT / 2)
+				continue;
+
+			rc = fg_inc_store_cycle_ctr(chip, i);
+			if (rc)
+				pr_err("Error in storing cycle_ctr rc: %d\n",
+				       rc);
 			chip->cyc_ctr.started[i] = false;
+			chip->cyc_ctr.last_soc[i] = 0;
+			chip->cyc_ctr.last_bucket = i;
 		}
 	}
 out:
@@ -8751,6 +8747,7 @@ static int fg_probe(struct platform_device *pdev)
 
 	mutex_init(&chip->rw_lock);
 	mutex_init(&chip->cyc_ctr.lock);
+	chip->cyc_ctr.last_bucket = -1;
 	mutex_init(&chip->learning_data.learning_lock);
 	mutex_init(&chip->rslow_comp.lock);
 	mutex_init(&chip->sysfs_restart_lock);
