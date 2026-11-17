@@ -1779,8 +1779,17 @@ static int edt_ft5x06_ts_suspend(struct device *dev)
 		cancel_work_sync(&tsdata->display_work);
 		/* Finish the transition before the parent I2C adapter suspends. */
 		edt_ft5x06_display_update(tsdata);
-		if (tsdata->gesture_active)
+		if (tsdata->gesture_active) {
+			/*
+			 * A double tap that wakes the system is replayed when
+			 * device interrupts resume, before the I2C adapter can
+			 * transfer again, and the gesture read fails. Hold the
+			 * handler until resume; the line still wakes, as the
+			 * GPIO chip re-enables disabled wake IRQs on suspend.
+			 */
+			disable_irq(client->irq);
 			return 0;
+		}
 	}
 
 	/* A key held across suspend never reports its release. */
@@ -1828,8 +1837,10 @@ static int edt_ft5x06_ts_resume(struct device *dev)
 	struct edt_ft5x06_ts_data *tsdata = i2c_get_clientdata(client);
 	int ret = 0;
 
-	if (tsdata->gesture_wakeup && tsdata->gesture_active)
+	if (tsdata->gesture_wakeup && tsdata->gesture_active) {
+		enable_irq(client->irq);
 		goto unblock;
+	}
 
 	if (!tsdata->gesture_wakeup && device_may_wakeup(dev))
 		goto unblock;
