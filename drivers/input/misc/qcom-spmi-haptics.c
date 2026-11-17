@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/time.h>
 #include <linux/types.h>
+#include <linux/uaccess.h>
 
 #define HAP_STATUS_1_REG		0x0A
 #define HAP_BUSY_BIT			BIT(1)
@@ -164,6 +165,7 @@ enum hap_play_control {
  * @wave_samp: The array of wave samples to write for buffer mode.
  * @brake_pat: The pattern to apply when braking.
  * @play_lock: Lock to be held when updating the hardware state.
+ * @ml_upload: The memless upload handler wrapped by spmi_haptics_upload().
  */
 struct spmi_haptics {
 	struct device *dev;
@@ -193,6 +195,9 @@ struct spmi_haptics {
 	u8 brake_pat[HAP_BRAKE_PAT_LEN];
 
 	struct mutex play_lock; /* serialises hardware play state updates */
+
+	int (*ml_upload)(struct input_dev *dev, struct ff_effect *effect,
+			 struct ff_effect *old);
 };
 
 static inline bool is_secure_addr(u16 addr)
@@ -826,6 +831,53 @@ end:
 	return 0;
 }
 
+/*
+ * Play length of each of the vibrator HAL's predefined effects, indexed by
+ * effect id: CLICK, DOUBLE_CLICK, TICK, THUD, POP, HEAVY_CLICK. Without wave
+ * patterns an ERM in direct mode can only buzz, so each effect is a buzz of
+ * this length, and any other id plays as a CLICK.
+ */
+static const u16 spmi_haptics_effect_ms[] = { 20, 30, 12, 35, 15, 35 };
+
+/* custom_data of the HAL: effect id in, play length out as s and ms */
+#define HAP_CUSTOM_DATA_LEN		3
+
+/*
+ * The vibrator HAL uploads a predefined effect as an FF_CUSTOM periodic
+ * effect and reads its play length back from custom_data, as the CAF
+ * qti-haptics driver returns it. Give the effect that length, so memless
+ * plays it as a timed rumble, and report it.
+ */
+static int spmi_haptics_upload(struct input_dev *dev, struct ff_effect *effect,
+			       struct ff_effect *old)
+{
+	struct spmi_haptics *haptics = input_get_drvdata(dev);
+	s16 data[HAP_CUSTOM_DATA_LEN];
+	u16 ms;
+
+	if (effect->type == FF_PERIODIC &&
+	    effect->u.periodic.waveform == FF_CUSTOM) {
+		if (effect->u.periodic.custom_len < sizeof(data))
+			return -EINVAL;
+		if (copy_from_user(data, effect->u.periodic.custom_data,
+				   sizeof(data)))
+			return -EFAULT;
+
+		ms = spmi_haptics_effect_ms[0];
+		if (data[0] >= 0 && data[0] < ARRAY_SIZE(spmi_haptics_effect_ms))
+			ms = spmi_haptics_effect_ms[data[0]];
+
+		effect->replay.length = ms;
+		data[1] = ms / MSEC_PER_SEC;
+		data[2] = ms % MSEC_PER_SEC;
+		if (copy_to_user(effect->u.periodic.custom_data, data,
+				 sizeof(data)))
+			return -EFAULT;
+	}
+
+	return haptics->ml_upload(dev, effect, old);
+}
+
 static void spmi_haptics_teardown(void *data)
 {
 	struct spmi_haptics *haptics = data;
@@ -971,7 +1023,6 @@ static int spmi_haptics_probe(struct platform_device *pdev)
 	input_dev->id.version = 1;
 	input_dev->close = spmi_haptics_close;
 	input_set_drvdata(input_dev, haptics);
-	// Figure out how to make this FF_PERIODIC
 	input_set_capability(haptics->haptics_input_dev, EV_FF, FF_RUMBLE);
 	input_set_capability(haptics->haptics_input_dev, EV_FF, FF_CONSTANT);
 
@@ -979,6 +1030,14 @@ static int spmi_haptics_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret,
 				     "couldn't register vibrator as FF device\n");
+
+	/*
+	 * Memless plays periodic effects as rumble, which it emulates from
+	 * FF_RUMBLE. Accept the HAL's custom waveform for predefined effects.
+	 */
+	__set_bit(FF_CUSTOM, input_dev->ffbit);
+	haptics->ml_upload = input_dev->ff->upload;
+	input_dev->ff->upload = spmi_haptics_upload;
 
 	ret = input_register_device(input_dev);
 	if (ret)
