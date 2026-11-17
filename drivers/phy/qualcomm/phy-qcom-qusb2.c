@@ -7,6 +7,7 @@
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/kernel.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
@@ -870,11 +871,14 @@ static int qusb2_phy_init(struct phy *phy)
 		readl(qphy->base + QUSB2PHY_PLL_TEST);
 	}
 
-	/* Required to get phy pll lock successfully */
+	/*
+	 * Required to get phy pll lock successfully. Poll afterwards rather
+	 * than sampling once: a single sample has failed on resume.
+	 */
 	usleep_range(100, 110);
 
-	val = readb(qphy->base + cfg->regs[QUSB2PHY_PLL_STATUS]);
-	if (!(val & cfg->mask_core_ready)) {
+	if (readb_poll_timeout(qphy->base + cfg->regs[QUSB2PHY_PLL_STATUS],
+			       val, val & cfg->mask_core_ready, 10, 1000)) {
 		dev_err(&phy->dev,
 			"QUSB2PHY pll lock failed: status reg = %x\n", val);
 		ret = -EBUSY;
