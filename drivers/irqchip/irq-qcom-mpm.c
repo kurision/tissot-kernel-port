@@ -92,6 +92,7 @@ struct qcom_mpm_priv {
 	unsigned int reg_stride;
 	struct irq_domain *domain;
 	struct generic_pm_domain genpd;
+	int irq;
 };
 
 static u32 qcom_mpm_read(struct qcom_mpm_priv *priv, unsigned int reg,
@@ -332,6 +333,13 @@ static int mpm_pd_power_off(struct generic_pm_domain *genpd)
 						  genpd);
 	int i, ret;
 
+	/*
+	 * The RPM brings back the CPU that entered system sleep and raises the
+	 * MPM interrupt there; aimed anywhere else it is not taken, and the
+	 * GPIO wakeups it replays stay pending until an unrelated wakeup.
+	 */
+	irq_set_affinity(priv->irq, cpumask_of(smp_processor_id()));
+
 	/* The STATUS writes below order these before the mailbox doorbell. */
 	mpm_write_next_wakeup(priv);
 
@@ -452,6 +460,7 @@ static int qcom_mpm_probe(struct platform_device *pdev, struct device_node *pare
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
 		return irq;
+	priv->irq = irq;
 
 	genpd = &priv->genpd;
 	genpd->flags = GENPD_FLAG_IRQ_SAFE;
@@ -513,6 +522,13 @@ static int qcom_mpm_probe(struct platform_device *pdev, struct device_node *pare
 			       "qcom_mpm", priv);
 	if (ret) {
 		dev_err(dev, "failed to request irq: %d\n", ret);
+		goto remove_domain;
+	}
+
+	/* A replayed GPIO wakeup must also end suspend-to-idle. */
+	ret = enable_irq_wake(irq);
+	if (ret) {
+		dev_err(dev, "failed to enable irq wake: %d\n", ret);
 		goto remove_domain;
 	}
 
