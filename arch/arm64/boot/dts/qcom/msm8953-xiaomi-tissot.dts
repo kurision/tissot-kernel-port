@@ -296,6 +296,10 @@
 	memory-region = <&qseecom_mem>;
 };
 
+&tz_log {
+	status = "okay";
+};
+
 &hsusb_phy {
 	vdd-supply = <&pm8953_l3>;
 	vdda-pll-supply = <&pm8953_l7>;
