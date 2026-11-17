@@ -1842,13 +1842,17 @@ static int mdss_mdp_irq_clk_setup(struct mdss_data_type *mdata)
 
 	pr_debug("max mdp clk rate=%d\n", mdata->max_mdp_clk_rate);
 
+	/*
+	 * The line is level triggered and can already be asserted by the
+	 * bootloader's splash. mdss_irq_handler() does not service it until
+	 * mdss_enable_irq(), so keep it disabled until then.
+	 */
 	ret = devm_request_irq(&mdata->pdev->dev, mdss_mdp_hw.irq_info->irq,
-				mdss_irq_handler, 0x0, "MDSS", mdata);
+				mdss_irq_handler, IRQF_NO_AUTOEN, "MDSS", mdata);
 	if (ret) {
 		pr_err("mdp request_irq() failed!\n");
 		return ret;
 	}
-	disable_irq(mdss_mdp_hw.irq_info->irq);
 
 	/*
 	 * MDSS_GDSC is a genpd power domain (power-domains in DT), held via
