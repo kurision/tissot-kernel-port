@@ -7,11 +7,17 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/panic.h>
 #include <linux/platform_device.h>
 #include <linux/reboot.h>
 #include <linux/reboot-mode.h>
 #include <linux/regmap.h>
 
+#define PON_PS_HOLD_RST_CTL		0x5a
+#define PON_PS_HOLD_RST_CTL2		0x5b
+#define PON_PS_HOLD_TYPE_MASK		GENMASK(3, 0)
+#define PON_PS_HOLD_WARM_RESET		0x1
+#define PON_PS_HOLD_RESET_EN		BIT(7)
 #define PON_SOFT_RB_SPARE		0x8f
 
 #define GEN1_REASON_SHIFT		2
@@ -44,10 +50,35 @@ static int qcom_pon_reboot_mode_write(struct reboot_mode_driver *reboot,
 	return ret;
 }
 
+/*
+ * The boot firmware arms PS_HOLD for a hard reset, which drops DDR and with
+ * it the ramoops record of the panic. Switch to a warm reset when the
+ * restart comes from a panic, as the downstream msm-poweroff did. The type
+ * may only change while the reset is disabled, for 10 sleep clock cycles.
+ */
+static int qcom_pon_panic_restart(struct sys_off_data *data)
+{
+	struct qcom_pon *pon = data->cb_data;
+
+	if (!panic_in_progress())
+		return NOTIFY_DONE;
+
+	regmap_update_bits(pon->regmap, pon->baseaddr + PON_PS_HOLD_RST_CTL2,
+			   PON_PS_HOLD_RESET_EN, 0);
+	udelay(500);
+	regmap_update_bits(pon->regmap, pon->baseaddr + PON_PS_HOLD_RST_CTL,
+			   PON_PS_HOLD_TYPE_MASK, PON_PS_HOLD_WARM_RESET);
+	regmap_update_bits(pon->regmap, pon->baseaddr + PON_PS_HOLD_RST_CTL2,
+			   PON_PS_HOLD_RESET_EN, PON_PS_HOLD_RESET_EN);
+
+	return NOTIFY_DONE;
+}
+
 static int qcom_pon_probe(struct platform_device *pdev)
 {
 	struct qcom_pon *pon;
 	long reason_shift;
+	unsigned int val;
 	int error;
 
 	pon = devm_kzalloc(&pdev->dev, sizeof(*pon), GFP_KERNEL);
@@ -78,6 +109,22 @@ static int qcom_pon_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "can't register reboot mode\n");
 			return error;
 		}
+	}
+
+	/*
+	 * Only PMICs with the separate PS_HOLD reset enable register, found
+	 * armed here by the boot firmware. Priority 130 runs ahead of the
+	 * PSCI (129) and PS_HOLD (128) restart handlers.
+	 */
+	if (reason_shift == GEN1_REASON_SHIFT &&
+	    !regmap_read(pon->regmap, pon->baseaddr + PON_PS_HOLD_RST_CTL2,
+			 &val) && (val & PON_PS_HOLD_RESET_EN)) {
+		error = devm_register_sys_off_handler(&pdev->dev,
+						      SYS_OFF_MODE_RESTART, 130,
+						      qcom_pon_panic_restart,
+						      pon);
+		if (error)
+			return error;
 	}
 
 	platform_set_drvdata(pdev, pon);
