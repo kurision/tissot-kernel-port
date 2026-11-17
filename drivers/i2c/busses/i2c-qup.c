@@ -137,6 +137,15 @@
  */
 #define TOUT_MIN			2
 
+/*
+ * A FIFO or block mode message gets ten times its time on the bus, plus a
+ * floor for interrupt latency and clock stretching. Sizing every wait for the
+ * largest DMA transfer would hold a short message on a stuck bus for ~15 s at
+ * 100 kHz.
+ */
+#define QUP_MSG_TOUT_SCALE		10
+#define QUP_MSG_TOUT_MIN_US		(300 * USEC_PER_MSEC)
+
 /* Default values. Use these if FW query fails */
 #define DEFAULT_CLK_FREQ I2C_MAX_STANDARD_MODE_FREQ
 #define DEFAULT_SRC_CLK 20000000
@@ -928,10 +937,14 @@ out:
 static int qup_i2c_wait_for_complete(struct qup_i2c_dev *qup,
 				     struct i2c_msg *msg)
 {
-	unsigned long left;
+	unsigned long timeout, left;
 	int ret = 0;
 
-	left = wait_for_completion_timeout(&qup->xfer, qup->xfer_timeout);
+	/* The address byte and the data, one_byte_t each */
+	timeout = usecs_to_jiffies((msg->len + 1) * qup->one_byte_t *
+				   QUP_MSG_TOUT_SCALE + QUP_MSG_TOUT_MIN_US);
+
+	left = wait_for_completion_timeout(&qup->xfer, timeout);
 	if (!left) {
 		writel(1, qup->base + QUP_SW_RESET);
 		ret = -ETIMEDOUT;
