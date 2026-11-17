@@ -1026,5 +1026,5 @@ static struct platform_driver spmi_haptics_driver = {
 module_platform_driver(spmi_haptics_driver);
 
 MODULE_DESCRIPTION("spmi haptics driver using ff-memless framework");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Caleb Connolly <caleb@connolly.tech>");
