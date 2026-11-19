@@ -6,6 +6,7 @@
 
 #include <linux/init.h>
 #include <linux/err.h>
+#include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/time.h>
@@ -57,7 +58,7 @@ struct snd_msm {
 	struct snd_pcm *pcm;
 };
 
-#define CMD_EOS_MIN_TIMEOUT_LENGTH  50
+#define CMD_EOS_MIN_TIMEOUT_MS      500
 #define CMD_EOS_TIMEOUT_MULTIPLIER  (HZ * 50)
 #define MAX_PB_COPY_RETRIES         3
 
@@ -892,6 +893,7 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 	struct snd_soc_component *component =
 			snd_soc_rtdcom_lookup(soc_prtd, DRV_NAME);
 	struct msm_plat_data *pdata;
+	const u32 min_timeout = msecs_to_jiffies(CMD_EOS_MIN_TIMEOUT_MS);
 	uint32_t timeout;
 	int dir = 0;
 	int ret = 0;
@@ -923,14 +925,14 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 		}
 		/* determine timeout length */
 		if (runtime->frame_bits == 0 || runtime->rate == 0) {
-			timeout = CMD_EOS_MIN_TIMEOUT_LENGTH;
+			timeout = min_timeout;
 		} else {
 			timeout = (runtime->period_size *
 					CMD_EOS_TIMEOUT_MULTIPLIER) /
 					((runtime->frame_bits / 8) *
 					 runtime->rate);
-			if (timeout < CMD_EOS_MIN_TIMEOUT_LENGTH)
-				timeout = CMD_EOS_MIN_TIMEOUT_LENGTH;
+			if (timeout < min_timeout)
+				timeout = min_timeout;
 		}
 		pr_debug("%s: CMD_EOS timeout is %d\n", __func__, timeout);
 
