@@ -57,8 +57,6 @@ struct snd_msm {
 	struct snd_pcm *pcm;
 };
 
-#define CMD_EOS_MIN_TIMEOUT_LENGTH  50
-#define CMD_EOS_TIMEOUT_MULTIPLIER  (HZ * 50)
 #define MAX_PB_COPY_RETRIES         3
 
 static struct snd_pcm_hardware msm_pcm_hardware_capture = {
@@ -179,7 +177,6 @@ static void event_handler(uint32_t opcode,
 	case ASM_DATA_EVENT_RENDERED_EOS:
 		pr_debug("ASM_DATA_EVENT_RENDERED_EOS\n");
 		clear_bit(CMD_EOS, &prtd->cmd_pending);
-		wake_up(&the_locks.eos_wait);
 		break;
 	case ASM_DATA_EVENT_READ_DONE_V2: {
 		pr_debug("ASM_DATA_EVENT_READ_DONE_V2\n");
@@ -304,7 +301,6 @@ static void event_handler(uint32_t opcode,
 		prtd->reset_event = true;
 		if (atomic_read(&prtd->start))
 			snd_pcm_period_elapsed(substream);
-		wake_up(&the_locks.eos_wait);
 		wake_up(&the_locks.write_wait);
 		wake_up(&the_locks.read_wait);
 		break;
@@ -892,9 +888,7 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 	struct snd_soc_component *component =
 			snd_soc_rtdcom_lookup(soc_prtd, DRV_NAME);
 	struct msm_plat_data *pdata;
-	uint32_t timeout;
 	int dir = 0;
-	int ret = 0;
 
 	pr_debug("%s: cmd_pending 0x%lx\n", __func__, prtd->cmd_pending);
 
@@ -921,25 +915,11 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 			if (pdata->perf_mode == LOW_LATENCY_PCM_MODE)
 				apr_end_rx_rt(prtd->audio_client->apr);
 		}
-		/* determine timeout length */
-		if (runtime->frame_bits == 0 || runtime->rate == 0) {
-			timeout = CMD_EOS_MIN_TIMEOUT_LENGTH;
-		} else {
-			timeout = (runtime->period_size *
-					CMD_EOS_TIMEOUT_MULTIPLIER) /
-					((runtime->frame_bits / 8) *
-					 runtime->rate);
-			if (timeout < CMD_EOS_MIN_TIMEOUT_LENGTH)
-				timeout = CMD_EOS_MIN_TIMEOUT_LENGTH;
-		}
-		pr_debug("%s: CMD_EOS timeout is %d\n", __func__, timeout);
-
-		ret = wait_event_timeout(the_locks.eos_wait,
-					 !test_bit(CMD_EOS, &prtd->cmd_pending),
-					 timeout);
-		if (!ret)
-			pr_err("%s: CMD_EOS failed, cmd_pending 0x%lx\n",
-			       __func__, prtd->cmd_pending);
+		/*
+		 * The backend port is already stopped when the stream closes,
+		 * so the DSP cannot render the EOS sent at trigger stop and
+		 * never acknowledges it. Close without waiting for it.
+		 */
 		q6asm_cmd(prtd->audio_client, CMD_CLOSE);
 		q6asm_audio_client_buf_free_contiguous(dir,
 					prtd->audio_client);
@@ -2971,7 +2951,6 @@ static struct platform_driver msm_pcm_driver = {
 int __init msm_pcm_dsp_init(void)
 {
 	init_waitqueue_head(&the_locks.enable_wait);
-	init_waitqueue_head(&the_locks.eos_wait);
 	init_waitqueue_head(&the_locks.write_wait);
 	init_waitqueue_head(&the_locks.read_wait);
 
