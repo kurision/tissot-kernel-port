@@ -839,11 +839,13 @@
 &usb3 {
 	status = "okay";
 	extcon = <&qpnp_smbcharger>;
+	vbus-supply = <&smbcharger_charger_otg>;
 };
 
 &usb3_dwc3 {
 	/delete-property/ usb-role-switch;
-	dr_mode = "peripheral";
+	dr_mode = "otg";
+	extcon = <&qpnp_smbcharger>;
 	usb-psy-name = "usb";
 	snps,dis_u2_susphy_quirk;
 	snps,dis_enblslpm_quirk;
