@@ -15,3 +15,10 @@ mbhc_dlkm.ko
 analog_cdc_dlkm.ko
 digital_cdc_dlkm.ko
 machine_dlkm.ko
+#
+# USB Wi-Fi adapters for USB host mode: rtl8xxxu (RTL8188EU/8188FU/8192EU and
+# other Realtek 802.11n parts), rtw88 RTL8821CU/8811CU, and MediaTek MT7601U.
+# Their firmware is not packaged; it is looked up on firmware_class.path.
+rtl8xxxu.ko
+rtw88_8821cu.ko
+mt7601u.ko
