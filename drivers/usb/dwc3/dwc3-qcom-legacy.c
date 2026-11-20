@@ -18,6 +18,7 @@
 #include <linux/platform_device.h>
 #include <linux/phy/phy.h>
 #include <linux/usb/of.h>
+#include <linux/regulator/consumer.h>
 #include <linux/reset.h>
 #include <linux/iopoll.h>
 #include <linux/mutex.h>
@@ -95,6 +96,11 @@ struct dwc3_qcom {
 	bool			vbus_override;
 	bool			vbus_override_pending;
 	bool			vbus_resume_pending;
+
+	/* Optional host-mode VBUS supply, switched by the extcon host state. */
+	struct regulator	*vbus_supply;
+	bool			vbus_supply_on;
+	bool			vbus_supply_parked;
 
 	enum usb_dr_mode	mode;
 	bool			is_suspended;
@@ -181,6 +187,34 @@ static int dwc3_qcom_vbus_notifier(struct notifier_block *nb,
 	return NOTIFY_DONE;
 }
 
+/*
+ * Drive VBUS to a device attached through an OTG adapter. The supply is a
+ * regulator, not a QSCRATCH register, so it needs no deferral while the glue
+ * is suspended.
+ */
+static void dwc3_qcom_set_vbus_supply(struct dwc3_qcom *qcom, bool on)
+{
+	int ret;
+
+	if (!qcom->vbus_supply)
+		return;
+
+	guard(mutex)(&qcom->vbus_lock);
+
+	if (qcom->vbus_supply_parked || qcom->vbus_supply_on == on)
+		return;
+
+	ret = on ? regulator_enable(qcom->vbus_supply) :
+		   regulator_disable(qcom->vbus_supply);
+	if (ret) {
+		dev_err(qcom->dev, "failed to %s VBUS supply: %d\n",
+			on ? "enable" : "disable", ret);
+		return;
+	}
+
+	qcom->vbus_supply_on = on;
+}
+
 static int dwc3_qcom_host_notifier(struct notifier_block *nb,
 				   unsigned long event, void *ptr)
 {
@@ -188,6 +222,7 @@ static int dwc3_qcom_host_notifier(struct notifier_block *nb,
 
 	/* disable vbus override in host mode */
 	dwc3_qcom_set_vbus_override(qcom, !event);
+	dwc3_qcom_set_vbus_supply(qcom, event);
 	qcom->mode = event ? USB_DR_MODE_HOST : USB_DR_MODE_PERIPHERAL;
 
 	return NOTIFY_DONE;
@@ -239,6 +274,10 @@ static int dwc3_qcom_register_extcon(struct dwc3_qcom *qcom)
 		dwc3_qcom_vbus_notifier(&qcom->vbus_nb, true, qcom->edev);
 	else
 		dwc3_qcom_vbus_notifier(&qcom->vbus_nb, false, qcom->edev);
+
+	/* An adapter already plugged in at probe needs VBUS now */
+	if (extcon_get_state(host_edev, EXTCON_USB_HOST) > 0)
+		dwc3_qcom_set_vbus_supply(qcom, true);
 
 	return 0;
 }
@@ -819,6 +858,14 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 				     "failed to get resets\n");
 	}
 
+	qcom->vbus_supply = devm_regulator_get_optional(dev, "vbus");
+	if (IS_ERR(qcom->vbus_supply)) {
+		if (PTR_ERR(qcom->vbus_supply) != -ENODEV)
+			return dev_err_probe(dev, PTR_ERR(qcom->vbus_supply),
+					     "failed to get VBUS supply\n");
+		qcom->vbus_supply = NULL;
+	}
+
 	ret = reset_control_assert(qcom->resets);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
@@ -922,8 +969,13 @@ static void dwc3_qcom_remove(struct platform_device *pdev)
 	 * The extcon notifiers are devm-managed and stay registered until
 	 * after remove() returns; park them before removing the core.
 	 */
-	scoped_guard(mutex, &qcom->vbus_lock)
+	scoped_guard(mutex, &qcom->vbus_lock) {
 		qcom->is_suspended = true;
+		qcom->vbus_supply_parked = true;
+		if (qcom->vbus_supply_on)
+			regulator_disable(qcom->vbus_supply);
+		qcom->vbus_supply_on = false;
+	}
 
 	of_platform_depopulate(&pdev->dev);
 	platform_device_put(qcom->dwc3);
