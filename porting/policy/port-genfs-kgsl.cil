@@ -183,3 +183,24 @@
 ;; expect the CAF 4.19 path, do not match them.  A prefix label covers
 ;; the video4linux directory, as the video codec's one does.
 (genfscon sysfs "/devices/platform/soc@0/1b0c000.qcom,cci/video4linux" (u object_r sysfs_graphics ((s0) (s0))))
+
+;; ---------------
+;; The notification LED and the key backlight on 6.18: the type the ROM
+;; gives its LEDs.
+;;
+;; The lights HAL (hal_light_default) writes
+;;
+;;   /sys/class/leds/white/{brightness,blink}
+;;   /sys/class/leds/button-backlight/brightness
+;;
+;; and the policy grants it sysfs_leds.  The 4.19 kernel's paths are
+;; labelled by the vendor file_contexts and the plat genfscon:
+;;
+;;   /sys/devices(/platform)?/soc/78b6000\.i2c/i2c-2/2-[0-9a-f]+/leds(/.*)?
+;;   /devices/platform/soc/200f000.qcom,spmi/.../qcom,leds@a100
+;;
+;; This kernel creates the AW2013 under soc@0 (the i2c2 alias keeps the
+;; bus number at 2) and the key backlight as a gpio-leds device at the
+;; root, so neither matches and both would land on the generic sysfs type.
+(genfscon sysfs "/devices/platform/soc@0/78b6000.i2c/i2c-2/2-0045/leds" (u object_r sysfs_leds ((s0) (s0))))
+(genfscon sysfs "/devices/platform/leds/leds" (u object_r sysfs_leds ((s0) (s0))))
