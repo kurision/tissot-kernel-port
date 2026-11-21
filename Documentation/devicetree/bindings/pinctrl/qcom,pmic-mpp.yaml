@@ -25,6 +25,7 @@ properties:
               - qcom,pm8937-mpp
               - qcom,pm8941-mpp
               - qcom,pm8950-mpp
+              - qcom,pm8953-mpp
               - qcom,pmi8950-mpp
               - qcom,pm8994-mpp
               - qcom,pma8084-mpp
@@ -96,6 +97,7 @@ $defs:
                  - mpp1-mpp4 for pm8937
                  - mpp1-mpp8 for pm8941
                  - mpp1-mpp4 for pm8950
+                 - mpp1-mpp4 for pm8953
                  - mpp1-mpp4 for pmi8950
                  - mpp1-mpp4 for pma8084
 
