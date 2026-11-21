@@ -220,6 +220,21 @@
 		};
 	};
 
+	leds {
+		compatible = "gpio-leds";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&button_backlight_default>;
+
+		led-0 {
+			label = "button-backlight";
+			function = LED_FUNCTION_KBD_BACKLIGHT;
+			color = <LED_COLOR_ID_WHITE>;
+			gpios = <&pm8953_mpps 2 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+
 	reserved-memory {
 		/* 0x84a00000 is other_ext_region (secure-app loading window owned
 		 * by TrustZone), not the shared DMA pool. Kept no-map and kept at
@@ -389,6 +404,15 @@
 		edt,keys = <500 2040 KEY_HOMEPAGE
 			    200 2040 KEY_APPSELECT
 			    800 2040 KEY_BACK>;
+	};
+};
+
+&pm8953_mpps {
+	/* Capacitive key backlight, a current sink to ground */
+	button_backlight_default: button-backlight-state {
+		pins = "mpp2";
+		function = "sink";
+		output-low;
 	};
 };
 
