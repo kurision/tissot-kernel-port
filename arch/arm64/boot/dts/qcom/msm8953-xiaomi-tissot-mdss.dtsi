@@ -51,13 +51,15 @@
 		 <&mdss_dsi0_pll MDSS_DSI_PLL_PIXEL_MUX>,
 		 <&mdss_dsi0_pll MDSS_DSI_PLL_BYTE_MUX>,
 		 <&mdss_dsi1_pll MDSS_DSI_PLL_PIXEL_MUX>,
-		 <&mdss_dsi1_pll MDSS_DSI_PLL_BYTE_MUX>;
+		 <&mdss_dsi1_pll MDSS_DSI_PLL_BYTE_MUX>,
+		 <&rpmcc RPM_SMD_BB_CLK1>;
 	clock-names = "xo",
 		      "sleep",
 		      "dsi0pll",
 		      "dsi0pllbyte",
 		      "dsi1pll",
-		      "dsi1pllbyte";
+		      "dsi1pllbyte",
+		      "bbclk1";
 };
 
 &cont_splash_mem {
