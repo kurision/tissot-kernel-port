@@ -1,0 +1,15 @@
+What:		/sys/class/leds/<led>/blink
+Date:		November 2026
+KernelVersion:	6.18
+Contact:	linux-leds@vger.kernel.org
+Description:
+		(WO) Start or stop blinking the LED with the default
+		hardware pattern of 1 Hz.
+
+		Writing a true value ("1", "y", "on") starts blinking at the
+		current brightness, or at full brightness when the LED is
+		off. Writing a false value ("0", "n", "off") turns the LED
+		off. Any active trigger is removed first.
+
+		The file exists for Android lights HALs that drive the
+		notification LED by writing 0 or 1 here.

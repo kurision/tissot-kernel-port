@@ -261,6 +261,45 @@ out:
 	return ret;
 }
 
+/*
+ * Android lights HALs for this family start and stop the notification
+ * pattern by writing 1 or 0 to a "blink" file, without passing timings.
+ * Map that onto the LED core so the hardware blink path is used.
+ */
+static ssize_t blink_store(struct device *dev, struct device_attribute *attr,
+			   const char *buf, size_t size)
+{
+	struct led_classdev *cdev = dev_get_drvdata(dev);
+	unsigned long delay_on = 0, delay_off = 0;
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+
+	guard(mutex)(&cdev->led_access);
+
+	if (led_sysfs_is_disabled(cdev))
+		return -EBUSY;
+
+	led_trigger_remove(cdev);
+
+	if (enable)
+		led_blink_set(cdev, &delay_on, &delay_off);
+	else
+		led_set_brightness(cdev, LED_OFF);
+
+	return size;
+}
+static DEVICE_ATTR_WO(blink);
+
+static struct attribute *aw2013_led_attrs[] = {
+	&dev_attr_blink.attr,
+	NULL
+};
+ATTRIBUTE_GROUPS(aw2013_led);
+
 static int aw2013_probe_dt(struct aw2013 *chip)
 {
 	struct device_node *np = dev_of_node(&chip->client->dev);
@@ -301,6 +340,7 @@ static int aw2013_probe_dt(struct aw2013 *chip)
 
 		led->cdev.brightness_set_blocking = aw2013_brightness_set;
 		led->cdev.blink_set = aw2013_blink_set;
+		led->cdev.groups = aw2013_led_groups;
 
 		ret = devm_led_classdev_register_ext(&chip->client->dev,
 						     &led->cdev, &init_data);
