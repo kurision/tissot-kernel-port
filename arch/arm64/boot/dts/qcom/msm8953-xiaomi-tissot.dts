@@ -337,6 +337,7 @@
 
 		led@0 {
 			reg = <0>;
+			label = "white";
 			led-max-microamp = <5000>;
 			function = LED_FUNCTION_INDICATOR;
 			color = <LED_COLOR_ID_WHITE>;
