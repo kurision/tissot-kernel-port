@@ -3526,6 +3526,10 @@ static struct clk_branch gcc_qusb_ref_clk = {
 		.enable_mask = BIT(0),
 		.hw.init = &(struct clk_init_data) {
 			.name = "gcc_qusb_ref_clk",
+			.parent_data = &(const struct clk_parent_data) {
+				.fw_name = "bbclk1",
+			},
+			.num_parents = 1,
 			.ops = &clk_branch2_ops,
 		}
 	}
