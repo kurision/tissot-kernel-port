@@ -30,6 +30,8 @@
 	qcom,board-id = <0x1000b 0x00>;
 
 	aliases {
+		i2c2 = &i2c_2;
+		i2c3 = &i2c_3;
 		mmc0 = &sdhc_1;
 		mmc1 = &sdhc_2;
 	};
