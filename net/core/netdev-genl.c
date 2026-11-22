@@ -4,6 +4,11 @@
 #include <linux/notifier.h>
 #include <linux/pid_namespace.h>
 #include <linux/rtnetlink.h>
+#ifdef CONFIG_X86
+#include <linux/android_kabi.h>
+
+ANDROID_KABI_DECLONLY(pid_namespace);
+#endif
 #include <net/busy_poll.h>
 #include <net/net_namespace.h>
 #include <net/netdev_queues.h>

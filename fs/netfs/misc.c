@@ -7,7 +7,10 @@
 
 #include <linux/swap.h>
 #include <linux/rmap.h>
+#include <linux/android_kabi.h>
 #include "internal.h"
+
+ANDROID_KABI_DECLONLY(anon_vma);
 
 /**
  * netfs_alloc_folioq_buffer - Allocate buffer space into a folio queue

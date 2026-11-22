@@ -482,3 +482,14 @@ int pci_enable_resources(struct pci_dev *dev, int mask)
 	}
 	return 0;
 }
+
+#undef pci_resize_resource
+/*
+ * ANDROID: KMI-compatible wrapper for callers of the old 3-argument
+ * pci_resize_resource(), which do not exclude any BARs.
+ */
+int pci_resize_resource(struct pci_dev *dev, int resno, int size)
+{
+	return __pci_resize_resource(dev, resno, size, 0);
+}
+EXPORT_SYMBOL(pci_resize_resource);

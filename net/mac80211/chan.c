@@ -1904,8 +1904,7 @@ static int ieee80211_vif_use_reserved_switch(struct ieee80211_local *local)
 use_reserved:
 		ctx->conf.radar_enabled = false;
 		for_each_chanctx_user_reserved(local, ctx, &iter) {
-			if (ieee80211_link_has_in_place_reservation(iter.link,
-								    ctx) &&
+			if (ieee80211_link_has_in_place_reservation(iter.link, ctx) &&
 			    !iter.link->reserved_ready)
 				return -EAGAIN;
 
@@ -1946,8 +1945,7 @@ use_reserved:
 		}
 
 		for_each_chanctx_user_reserved(local, ctx, &iter) {
-			if (!ieee80211_link_has_in_place_reservation(iter.link,
-								     ctx))
+			if (!ieee80211_link_has_in_place_reservation(iter.link, ctx))
 				continue;
 
 			ieee80211_chan_bw_change(local,
@@ -2047,8 +2045,7 @@ use_reserved:
 		for_each_chanctx_user_reserved(local, ctx, &iter) {
 			struct ieee80211_link_data *link = iter.link;
 
-			if (WARN_ON(ieee80211_link_has_in_place_reservation(link,
-									    ctx)))
+			if (WARN_ON(ieee80211_link_has_in_place_reservation(link, ctx)))
 				continue;
 
 			if (!link->reserved_ready)

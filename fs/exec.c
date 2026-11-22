@@ -31,7 +31,10 @@
 #include <linux/stat.h>
 #include <linux/fcntl.h>
 #include <linux/futex.h>
+#include <linux/android_kabi.h>
 #include <linux/swap.h>
+
+ANDROID_KABI_DECLONLY(robust_list_head);
 #include <linux/string.h>
 #include <linux/init.h>
 #include <linux/sched/mm.h>

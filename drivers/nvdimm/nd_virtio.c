@@ -154,7 +154,11 @@ static void virtio_pmem_flush_work(struct work_struct *work)
 	if (err > 0)
 		err = -EIO;
 	if (err)
-		flush->bio->bi_status = errno_to_blk_status(err);
+		/*
+		 * ANDROID: errno_to_blk_status() is not in the x86_64 KMI, and
+		 * err is -EIO or a negative errno here, so report an I/O error.
+		 */
+		flush->bio->bi_status = BLK_STS_IOERR;
 	bio_endio(flush->bio);
 	kfree(flush);
 }

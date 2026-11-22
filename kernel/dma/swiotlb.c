@@ -1867,7 +1867,6 @@ static int rmem_swiotlb_device_init(struct reserved_mem *rmem,
 		if (!no_decrypt)
 			set_memory_decrypted((unsigned long)phys_to_virt(rmem->base),
 					     rmem->size >> PAGE_SHIFT);
-
 		swiotlb_init_io_tlb_pool(pool, rmem->base, phys_to_virt(rmem->base),
 					 nslabs,
 					 false, nareas);

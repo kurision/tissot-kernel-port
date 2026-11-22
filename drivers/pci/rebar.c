@@ -7,8 +7,12 @@
 #include <linux/errno.h>
 #include <linux/export.h>
 #include <linux/ioport.h>
+#include <linux/msi.h>
+#include <linux/of.h>
 #include <linux/pci.h>
+#include <linux/pci_hotplug.h>
 #include <linux/types.h>
+#include <linux/vmalloc.h>
 
 #include "pci.h"
 
@@ -192,7 +196,7 @@ void pci_resize_resource_set_size(struct pci_dev *dev, int resno, int size)
 }
 
 /**
- * pci_resize_resource - reconfigure a Resizable BAR and resources
+ * __pci_resize_resource - reconfigure a Resizable BAR and resources
  * @dev: the PCI device
  * @resno: index of the BAR to be resized
  * @size: new size as defined in the spec (0=1MB, 31=128TB)
@@ -211,8 +215,8 @@ void pci_resize_resource_set_size(struct pci_dev *dev, int resno, int size)
  * Return: 0 on success, or negative on error. In case of an error, the
  *         resources are restored to their original places.
  */
-int pci_resize_resource(struct pci_dev *dev, int resno, int size,
-			int exclude_bars)
+int __pci_resize_resource(struct pci_dev *dev, int resno, int size,
+			  int exclude_bars)
 {
 	struct pci_host_bridge *host;
 	u32 sizes;
@@ -234,4 +238,4 @@ int pci_resize_resource(struct pci_dev *dev, int resno, int size,
 
 	return pci_do_resource_release_and_resize(dev, resno, size, exclude_bars);
 }
-EXPORT_SYMBOL(pci_resize_resource);
+EXPORT_SYMBOL(__pci_resize_resource);
