@@ -277,6 +277,7 @@ struct smbchg_chip {
 	struct led_classdev		led_cdev;
 	bool				skip_usb_notification;
 	struct iio_channel		*vchg_vadc_chan;
+	struct iio_channel		*usbin_vadc_chan;
 
 	/* voters */
 	struct votable			*fcc_votable;
@@ -5679,6 +5680,11 @@ static int smbchg_usb_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_HEALTH:
 		val->intval = chip->usb_health;
 		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		if (!chip->usbin_vadc_chan)
+			return -ENODATA;
+		return iio_read_channel_processed(chip->usbin_vadc_chan,
+						  &val->intval);
 	default:
 		return -EINVAL;
 	}
@@ -5737,6 +5743,8 @@ static enum power_supply_property smbchg_usb_properties[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_SDP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+	/* Keep the optional USBIN reading last. */
+	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 };
 
 #define CHARGE_OUTPUT_VTG_RATIO		840
@@ -8074,6 +8082,15 @@ static int smbchg_probe(struct platform_device *pdev)
 		chip->vchg_vadc_chan = NULL;
 	}
 
+	if (of_property_match_string(pdev->dev.of_node, "io-channel-names",
+				     "usbin") >= 0) {
+		chip->usbin_vadc_chan = devm_iio_channel_get(&pdev->dev, "usbin");
+		if (IS_ERR(chip->usbin_vadc_chan))
+			return dev_err_probe(&pdev->dev,
+					     PTR_ERR(chip->usbin_vadc_chan),
+					     "Failed to get USBIN ADC channel\n");
+	}
+
 	INIT_WORK(&chip->usb_set_online_work, smbchg_usb_update_online_work);
 	INIT_DELAYED_WORK(&chip->parallel_en_work,
 			smbchg_parallel_usb_en_work);
@@ -8235,6 +8252,8 @@ static int smbchg_probe(struct platform_device *pdev)
 	chip->usb_psy_d.set_property = smbchg_usb_set_property;
 	chip->usb_psy_d.properties = smbchg_usb_properties;
 	chip->usb_psy_d.num_properties = ARRAY_SIZE(smbchg_usb_properties);
+	if (!chip->usbin_vadc_chan)
+		chip->usb_psy_d.num_properties--;
 	chip->usb_psy_d.property_is_writeable = smbchg_usb_is_writeable;
 
 	usb_psy_cfg.drv_data = chip;
