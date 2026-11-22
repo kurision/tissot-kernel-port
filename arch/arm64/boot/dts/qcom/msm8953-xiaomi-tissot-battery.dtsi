@@ -219,8 +219,9 @@
 	/delete-property/ qcom,external-typec;
 	/delete-property/ qcom,typec-psy-name;
 	qcom,thermal-mitigation = <3000 2500 2000 1000 1000 500 0>;
-    io-channels = <&pmi8950_vadc VADC_SPARE1_03>;
-	io-channel-names = "vchg_sns";
+	io-channels = <&pmi8950_vadc VADC_SPARE1_03>,
+		      <&pmi8950_vadc VADC_USBIN>;
+	io-channel-names = "vchg_sns", "usbin";
     status = "okay";
 };
 
@@ -246,6 +247,10 @@
 };
 
 &pmi8950_vadc {
+	channel@0 {
+		qcom,pre-scaling = <1 20>;
+	};
+
 	/* The donor's VCHG_SNS_LEGACY is hardware channel 3, not channel 2. */
 	channel@3 {
 		reg = <VADC_SPARE1_03>;
