@@ -1115,20 +1115,6 @@ static int get_prop_batt_voltage_max_design(struct smbchg_chip *chip)
 	return uv;
 }
 
-static int get_prop_batt_capacity_level(struct smbchg_chip *chip)
-{
-	int capacity = get_prop_batt_capacity(chip);
-
-	if (get_prop_batt_status(chip) == POWER_SUPPLY_STATUS_FULL)
-		return POWER_SUPPLY_CAPACITY_LEVEL_FULL;
-	if (capacity <= 5)
-		return POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
-	if (capacity <= 15)
-		return POWER_SUPPLY_CAPACITY_LEVEL_LOW;
-
-	return POWER_SUPPLY_CAPACITY_LEVEL_NORMAL;
-}
-
 /* Fuel gauge properties the battery supply reports unchanged. */
 static int get_prop_batt_from_fg(struct smbchg_chip *chip,
 				 enum power_supply_property prop,
@@ -1141,6 +1127,27 @@ static int get_prop_batt_from_fg(struct smbchg_chip *chip,
 		return -ENODATA;
 
 	return power_supply_get_property(chip->bms_psy, prop, val);
+}
+
+static int get_prop_batt_capacity_level(struct smbchg_chip *chip)
+{
+	union power_supply_propval level;
+	int status;
+
+	if (get_prop_batt_from_fg(chip, POWER_SUPPLY_PROP_CAPACITY_LEVEL, &level))
+		return POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
+
+	if (level.intval != POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL)
+		return level.intval;
+
+	/* Android uses Critical to schedule a shutdown. */
+	status = get_prop_batt_status(chip);
+	if (status == POWER_SUPPLY_STATUS_UNKNOWN)
+		return POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
+	if (status == POWER_SUPPLY_STATUS_DISCHARGING)
+		return POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
+
+	return POWER_SUPPLY_CAPACITY_LEVEL_LOW;
 }
 
 static int get_prop_batt_health(struct smbchg_chip *chip)

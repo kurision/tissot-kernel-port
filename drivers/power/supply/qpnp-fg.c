@@ -2216,27 +2216,30 @@ static int fg_get_vbatt_status(struct fg_chip *chip, bool *vbatt_low_sts)
 }
 
 #define SOC_EMPTY	BIT(3)
-static bool fg_is_batt_empty(struct fg_chip *chip)
+static int fg_read_batt_empty(struct fg_chip *chip, bool *empty)
 {
 	u8 fg_soc_sts;
 	int rc;
-	bool vbatt_low_sts;
 
-	if (chip->use_vbat_low_empty_soc) {
-		if (fg_get_vbatt_status(chip, &vbatt_low_sts))
-			return false;
-
-		return vbatt_low_sts;
-	}
+	if (chip->use_vbat_low_empty_soc)
+		return fg_get_vbatt_status(chip, empty);
 
 	rc = fg_read(chip, &fg_soc_sts, INT_RT_STS(chip->soc_base), 1);
 	if (rc) {
 		pr_err("spmi read failed: addr=%03X, rc=%d\n",
 				INT_RT_STS(chip->soc_base), rc);
-		return false;
+		return rc;
 	}
 
-	return (fg_soc_sts & SOC_EMPTY) != 0;
+	*empty = !!(fg_soc_sts & SOC_EMPTY);
+	return 0;
+}
+
+static bool fg_is_batt_empty(struct fg_chip *chip)
+{
+	bool empty;
+
+	return !fg_read_batt_empty(chip, &empty) && empty;
 }
 
 static int get_monotonic_soc_raw(struct fg_chip *chip)
@@ -4845,8 +4848,34 @@ static int fg_set_battery_info(struct fg_chip *chip, int val)
 	return 0;
 }
 
+static int fg_get_capacity_level(struct fg_chip *chip)
+{
+	bool empty;
+	int capacity;
+
+	if (READ_ONCE(chip->init_error) ||
+	    READ_ONCE(chip->battery_missing) ||
+	    !READ_ONCE(chip->soc_reporting_ready) ||
+	    fg_read_batt_empty(chip, &empty))
+		return POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
+
+	if (empty)
+		return POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
+
+	capacity = get_prop_capacity(chip);
+	if (capacity < 0)
+		return POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
+	if (capacity == FULL_CAPACITY)
+		return POWER_SUPPLY_CAPACITY_LEVEL_FULL;
+	if (capacity <= 15)
+		return POWER_SUPPLY_CAPACITY_LEVEL_LOW;
+
+	return POWER_SUPPLY_CAPACITY_LEVEL_NORMAL;
+}
+
 static enum power_supply_property fg_power_props[] = {
 	POWER_SUPPLY_PROP_CAPACITY,
+	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
 	POWER_SUPPLY_PROP_CAPACITY_RAW,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
@@ -4885,6 +4914,11 @@ static int fg_power_get_property(struct power_supply *psy,
 {
     struct fg_chip *chip =  power_supply_get_drvdata(psy);
     bool vbatt_low_sts;
+
+	if (psp == POWER_SUPPLY_PROP_CAPACITY_LEVEL) {
+		val->intval = fg_get_capacity_level(chip);
+		return 0;
+	}
 
 	if (READ_ONCE(chip->init_error))
 		return chip->init_error;
