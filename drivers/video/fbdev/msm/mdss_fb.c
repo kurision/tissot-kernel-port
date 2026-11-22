@@ -2441,7 +2441,7 @@ static int mdss_fb_fbmem_ion_mmap(struct fb_info *info,
 
 	page = sg_page(table->sgl);
 	if (page) {
-		for_each_sg(table->sgl, sg, table->nents, i) {
+		for_each_sgtable_sg(table, sg, i) {
 			unsigned long remainder = vma->vm_end - addr;
 			unsigned long len = sg->length;
 
@@ -2470,11 +2470,13 @@ static int mdss_fb_fbmem_ion_mmap(struct fb_info *info,
 					(unsigned long)pgprot_val
 							(vma->vm_page_prot));
 
-			io_remap_pfn_range(vma, addr, page_to_pfn(page), len,
-					vma->vm_page_prot);
+			rc = io_remap_pfn_range(vma, addr, page_to_pfn(page),
+						len, vma->vm_page_prot);
+			if (rc)
+				return rc;
 			addr += len;
 			if (addr >= vma->vm_end)
-				break;
+				return 0;
 		}
 	} else {
 		pr_err("PAGE is null\n");
@@ -2482,7 +2484,7 @@ static int mdss_fb_fbmem_ion_mmap(struct fb_info *info,
 		return -ENOMEM;
 	}
 
-	return rc;
+	return -EINVAL;
 }
 
 /*
