@@ -133,6 +133,19 @@ static inline void dwc3_qcom_clrbits(void __iomem *base, u32 offset, u32 val)
 	readl(base + offset);
 }
 
+static bool dwc3_qcom_vbus_can_resume(struct dwc3_qcom *qcom)
+{
+	enum usb_dr_mode mode = usb_get_dr_mode(&qcom->dwc3->dev);
+	struct extcon_dev *host_edev = qcom->host_edev ?: qcom->edev;
+
+	if (mode == USB_DR_MODE_PERIPHERAL)
+		return true;
+
+	return mode == USB_DR_MODE_OTG && qcom->edev &&
+	       extcon_get_state(qcom->edev, EXTCON_USB) > 0 &&
+	       extcon_get_state(host_edev, EXTCON_USB_HOST) == 0;
+}
+
 static void dwc3_qcom_vbus_override_enable(struct dwc3_qcom *qcom, bool enable)
 {
 	if (enable) {
@@ -141,9 +154,8 @@ static void dwc3_qcom_vbus_override_enable(struct dwc3_qcom *qcom, bool enable)
 		dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_HS_PHY_CTRL,
 				  UTMI_OTG_VBUS_VALID | SW_SESSVLD_SEL);
 		/* VBUS alone cannot wake a runtime-suspended peripheral core. */
-		if (usb_get_dr_mode(&qcom->dwc3->dev) == USB_DR_MODE_PERIPHERAL)
-			qcom->vbus_resume_pending =
-				pm_request_resume(&qcom->dwc3->dev) == -EACCES;
+		qcom->vbus_resume_pending = dwc3_qcom_vbus_can_resume(qcom) &&
+			pm_request_resume(&qcom->dwc3->dev) == -EACCES;
 	} else {
 		qcom->vbus_resume_pending = false;
 		dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_SS_PHY_CTRL,
@@ -1048,7 +1060,8 @@ static void dwc3_qcom_complete(struct device *dev)
 
 	/* Direct-complete children have runtime PM disabled until resume ends. */
 	qcom->vbus_resume_pending = false;
-	pm_request_resume(&qcom->dwc3->dev);
+	if (dwc3_qcom_vbus_can_resume(qcom))
+		pm_request_resume(&qcom->dwc3->dev);
 }
 
 static const struct dev_pm_ops dwc3_qcom_dev_pm_ops = {
