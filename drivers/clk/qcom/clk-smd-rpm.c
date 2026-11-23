@@ -1421,10 +1421,51 @@ err:
 	return ret;
 }
 
+/*
+ * clk_smd_rpm_handoff() votes every clock on in both RPM sets, because the
+ * RPM state cannot be read back. A clock no consumer ever prepares keeps
+ * that vote for good, and a sleep-set vote on the XO or on an XO buffer
+ * keeps the RPM out of XO shutdown. Once every consumer has probed, drop
+ * the vote of each clock pair that has no user.
+ */
+static void rpm_smd_clk_sync_state(struct device *dev)
+{
+	const struct rpm_smd_clk_desc *desc = of_device_get_match_data(dev);
+	struct clk_smd_rpm_req req = {
+		.nbytes = cpu_to_le32(sizeof(u32)),
+		.value = cpu_to_le32(0),
+	};
+	size_t i;
+
+	guard(mutex)(&rpm_smd_clk_lock);
+
+	for (i = 0; i < desc->num_clks; i++) {
+		struct clk_smd_rpm *r = desc->clks[i];
+
+		/* Each pair is visited once, through its sleep-capable half. */
+		if (!r || r->active_only || r->enabled || r->peer->enabled)
+			continue;
+
+		req.key = cpu_to_le32(r->rpm_key);
+		if (qcom_rpm_smd_write(rpmcc_smd_rpm, QCOM_SMD_RPM_ACTIVE_STATE,
+				       r->rpm_res_type, r->rpm_clk_id, &req,
+				       sizeof(req)) ||
+		    qcom_rpm_smd_write(rpmcc_smd_rpm, QCOM_SMD_RPM_SLEEP_STATE,
+				       r->rpm_res_type, r->rpm_clk_id, &req,
+				       sizeof(req)))
+			dev_warn(dev, "failed to drop the boot vote on %s\n",
+				 clk_hw_get_name(&r->hw));
+		else
+			dev_dbg(dev, "dropped the boot vote on %s\n",
+				clk_hw_get_name(&r->hw));
+	}
+}
+
 static struct platform_driver rpm_smd_clk_driver = {
 	.driver = {
 		.name = "qcom-clk-smd-rpm",
 		.of_match_table = rpm_smd_clk_match_table,
+		.sync_state = rpm_smd_clk_sync_state,
 	},
 	.probe = rpm_smd_clk_probe,
 };
