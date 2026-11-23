@@ -534,8 +534,13 @@ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
 	 * suspends, and the next suspend gates the clocks normally.
 	 * The HS-PHY L2 latch below only proves a past U3, not that the
 	 * link is idle now, so it cannot gate this decision.
+	 *
+	 * Test the status alone: a runtime-suspended device-mode core is
+	 * left suspended through system sleep by direct_complete, which
+	 * disables its runtime PM first, so pm_runtime_suspended() would
+	 * report it active on every system suspend.
 	 */
-	if (!pm_runtime_suspended(&qcom->dwc3->dev)) {
+	if (!pm_runtime_status_suspended(&qcom->dwc3->dev)) {
 		dev_dbg(qcom->dev, "core active; keeping glue clocks on\n");
 		return 0;
 	}
