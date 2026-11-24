@@ -3058,8 +3058,9 @@ out:
 /*
  * Each bucket counts the charges that passed through its SOC band, so a
  * single bucket only moves when the battery is charged through that band.
- * cycle_count_id 0 reports the average over all buckets as the overall
- * charge cycle count; 1 to BUCKET_COUNT report a single bucket.
+ * cycle_count_id 0 reports the average over all buckets, rounded to the
+ * nearest cycle, as the overall charge cycle count; 1 to BUCKET_COUNT
+ * report a single bucket.
  */
 static int fg_get_cycle_count(struct fg_chip *chip)
 {
@@ -3077,7 +3078,7 @@ static int fg_get_cycle_count(struct fg_chip *chip)
 	} else {
 		for (i = 0; i < BUCKET_COUNT; i++)
 			count += chip->cyc_ctr.count[i];
-		count /= BUCKET_COUNT;
+		count = DIV_ROUND_CLOSEST(count, BUCKET_COUNT);
 	}
 	mutex_unlock(&chip->cyc_ctr.lock);
 	return count;
@@ -5651,8 +5652,7 @@ static irqreturn_t fg_batt_missing_irq_handler(int irq, void *_chip)
 		chip->soc_reporting_ready = false;
 		chip->batt_type = default_batt_type;
 		mutex_lock(&chip->cyc_ctr.lock);
-		if (fg_debug_mask & FG_IRQS)
-			pr_info("battery missing, clearing cycle counters\n");
+		pr_warn("battery missing, clearing cycle counters\n");
 		clear_cycle_counter(chip);
 		mutex_unlock(&chip->cyc_ctr.lock);
 	} else {
