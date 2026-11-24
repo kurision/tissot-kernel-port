@@ -6,6 +6,7 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/pm_domain.h>
 #include <linux/of.h>
 #include <linux/clk-provider.h>
 #include <linux/regmap.h>
@@ -4232,6 +4233,20 @@ static int gcc_msm8953_probe(struct platform_device *pdev)
 	return qcom_cc_really_probe(&pdev->dev, &gcc_msm8953_desc, regmap);
 }
 
+/*
+ * Registering the GDSCs makes this device a genpd provider, and genpd then
+ * installs its own sync_state on the driver. The clock core keeps every
+ * clock that was on at boot prepared until the provider calls
+ * clk_sync_state(), which genpd's callback does not do, so those clocks
+ * would stay on for good and keep XO voted in the RPM sleep set. Release
+ * the clocks and the power domains together.
+ */
+static void gcc_msm8953_sync_state(struct device *dev)
+{
+	clk_sync_state(dev);
+	of_genpd_sync_state(dev->of_node);
+}
+
 static const struct of_device_id gcc_msm8953_match_table[] = {
 	{ .compatible = "qcom,gcc-msm8953" },
 	{},
@@ -4243,6 +4258,7 @@ static struct platform_driver gcc_msm8953_driver = {
 	.driver = {
 		.name = "gcc-msm8953",
 		.of_match_table = gcc_msm8953_match_table,
+		.sync_state = gcc_msm8953_sync_state,
 	},
 };
 
