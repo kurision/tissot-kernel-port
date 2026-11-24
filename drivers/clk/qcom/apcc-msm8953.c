@@ -353,6 +353,51 @@ static int apcc_park(struct apcc_msm8953 *apcc, unsigned int muxs)
 }
 
 /*
+ * GPLL0 and GPLL2 feed the muxes only while the firmware's boot selection or
+ * a park is in effect. An enable held outside those windows keeps their XO
+ * parent voted in the RPM sleep set, and with it the SoC out of XO shutdown,
+ * so the enables follow the mux selection while the rate protection taken at
+ * probe stays for good.
+ *
+ * These run from the rate notifier, under the clock prepare lock and
+ * apcc->lock, so they do not take apcc_inputs_lock: probe holds that lock
+ * across clk_prepare_enable(). The notifier only runs once probe has
+ * registered the outputs, after which probe no longer touches apcc_inputs.
+ */
+static int apcc_hold_gpll0(void)
+{
+	int ret;
+
+	if (apcc_inputs[1].enabled)
+		return 0;
+	ret = clk_prepare_enable(apcc_inputs[1].clock);
+	if (!ret)
+		apcc_inputs[1].enabled = true;
+	return ret;
+}
+
+static void apcc_release_inputs(struct apcc_msm8953 *apcc)
+{
+	static const unsigned int src[] = { 0, APCC_SRC_GPLL0, APCC_SRC_GPLL2 };
+	struct apcc_state state;
+	unsigned int i, id;
+
+	if (apcc->faulted || apcc_power.faulted || apcc_read_state(apcc, &state))
+		return;
+	for (i = 1; i < ARRAY_SIZE(apcc_inputs); i++) {
+		if (!apcc_inputs[i].enabled)
+			continue;
+		for (id = 0; id < APCC_NUM_CLOCKS; id++)
+			if (((state.cfg[id] >> 8) & 7) == src[i])
+				break;
+		if (id < APCC_NUM_CLOCKS)
+			continue;
+		clk_disable_unprepare(apcc_inputs[i].clock);
+		apcc_inputs[i].enabled = false;
+	}
+}
+
+/*
  * The donor waits 200 us after it de-asserts the reset before it trusts the
  * lock indication, then polls the status bit for up to 200 us and reads it
  * twice, so that the early transient locks the hardware shows are not taken
@@ -600,6 +645,10 @@ static int apcc_begin(struct apcc_msm8953 *apcc, unsigned long rate)
 	if (park < 0)
 		return park;
 	target = max(target, park);
+	/* Every output is parked on GPLL0 below. */
+	ret = apcc_hold_gpll0();
+	if (ret)
+		return ret;
 	ret = apcc_read_state(apcc, &apcc->saved);
 	if (ret)
 		return ret;
@@ -663,6 +712,7 @@ static int apcc_begin(struct apcc_msm8953 *apcc, unsigned long rate)
 	return 0;
 rollback:
 	apcc_restore(apcc, APCC_MUX_ALL);
+	apcc_release_inputs(apcc);
 	return ret;
 }
 
@@ -680,6 +730,7 @@ static void apcc_finish(struct apcc_msm8953 *apcc, bool abort)
 			dev_warn(apcc->dev, "retaining higher corner after transition: %d\n", ret);
 	}
 	apcc->pending = false;
+	apcc_release_inputs(apcc);
 }
 
 /* CCF propagates PRE vetoes, but ignores errors from a provider's .set_rate. */
