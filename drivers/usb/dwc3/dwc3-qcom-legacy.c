@@ -105,7 +105,6 @@ struct dwc3_qcom {
 	enum usb_dr_mode	mode;
 	bool			is_suspended;
 	bool			pm_suspended;
-	bool			core_active_at_suspend;
 	struct icc_path		*icc_path_ddr;
 	struct icc_path		*icc_path_apps;
 };
@@ -1017,9 +1016,6 @@ static int __maybe_unused dwc3_qcom_pm_suspend(struct device *dev)
 	bool wakeup = device_may_wakeup(dev);
 	int ret;
 
-	qcom->core_active_at_suspend =
-		!pm_runtime_status_suspended(&qcom->dwc3->dev);
-
 	ret = dwc3_qcom_suspend(qcom, wakeup);
 	if (ret)
 		return ret;
@@ -1061,30 +1057,8 @@ static int __maybe_unused dwc3_qcom_runtime_resume(struct device *dev)
 static void dwc3_qcom_complete(struct device *dev)
 {
 	struct dwc3_qcom *qcom = dev_get_drvdata(dev);
-	struct device *core = &qcom->dwc3->dev;
-	bool core_was_active;
 
 	guard(mutex)(&qcom->vbus_lock);
-
-	core_was_active = qcom->core_active_at_suspend;
-	qcom->core_active_at_suspend = false;
-
-	/*
-	 * dwc3_pm_resume() marks the core runtime suspended when its
-	 * resume fails, e.g. when the QUSB2 PLL does not lock. The gadget
-	 * then stays down until the cable is replugged, and the next system
-	 * suspend gates the glue clocks under a core that never stopped
-	 * itself, which the branch halt check reports as stuck on. A core
-	 * that was active going into suspend and reads suspended here
-	 * failed its resume: retry it once through runtime resume.
-	 */
-	if (core_was_active && !qcom->is_suspended &&
-	    pm_runtime_status_suspended(core)) {
-		dev_warn(qcom->dev, "core failed to resume, retrying\n");
-		qcom->vbus_resume_pending = false;
-		pm_request_resume(core);
-		return;
-	}
 
 	if (!qcom->vbus_resume_pending || qcom->is_suspended)
 		return;
