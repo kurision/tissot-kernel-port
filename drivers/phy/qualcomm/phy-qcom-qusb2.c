@@ -777,11 +777,60 @@ static int qusb2_phy_init(struct phy *phy)
 		goto disable_iface_clk;
 	}
 
+	/*
+	 * Not all the SoCs have got a readable TCSR_PHY_CLK_SCHEME
+	 * register in the TCSR so, if there's none, use the default
+	 * value hardcoded in the configuration.
+	 */
+	qphy->has_se_clk_scheme = cfg->se_clk_scheme_default;
+
+	/*
+	 * read TCSR_PHY_CLK_SCHEME register to check if single-ended
+	 * clock scheme is selected. If yes, then disable differential
+	 * ref_clk and use single-ended clock, otherwise use differential
+	 * ref_clk only.
+	 */
+	if (qphy->tcsr) {
+		ret = regmap_read(qphy->tcsr, qphy->cfg->clk_scheme_offset,
+				  &clk_scheme);
+		if (ret) {
+			dev_err(&phy->dev, "failed to read clk scheme reg\n");
+			goto disable_ahb_clk;
+		}
+
+		/* is it a differential clock scheme ? */
+		if (!(clk_scheme & PHY_CLK_SCHEME_SEL)) {
+			dev_vdbg(&phy->dev, "%s(): select differential clk\n",
+				 __func__);
+			qphy->has_se_clk_scheme = false;
+		} else {
+			dev_vdbg(&phy->dev, "%s(): select single-ended clk\n",
+				 __func__);
+		}
+	}
+
+	/*
+	 * Prepare the differential reference now and open its gate only
+	 * once the PHY is powered up below. Preparing it starts its
+	 * source, on msm8953 the PMIC buffer BB_CLK1 voted through the
+	 * RPM, which is not ready the moment its vote is acked. The
+	 * vendor driver likewise runs that source from before the PHY
+	 * reset and toggles only the GCC gate around the PLL power-up.
+	 */
+	if (!qphy->has_se_clk_scheme) {
+		ret = clk_prepare(qphy->ref_clk);
+		if (ret) {
+			dev_err(&phy->dev, "failed to prepare ref clk, %d\n",
+				ret);
+			goto disable_ahb_clk;
+		}
+	}
+
 	/* Perform phy reset */
 	ret = reset_control_assert(qphy->phy_reset);
 	if (ret) {
 		dev_err(&phy->dev, "failed to assert phy_reset, %d\n", ret);
-		goto disable_ahb_clk;
+		goto unprepare_ref_clk;
 	}
 
 	/* 100 us delay to keep PHY in reset mode */
@@ -790,7 +839,7 @@ static int qusb2_phy_init(struct phy *phy)
 	ret = reset_control_deassert(qphy->phy_reset);
 	if (ret) {
 		dev_err(&phy->dev, "failed to de-assert phy_reset, %d\n", ret);
-		goto disable_ahb_clk;
+		goto unprepare_ref_clk;
 	}
 
 	/* Disable the PHY */
@@ -818,40 +867,8 @@ static int qusb2_phy_init(struct phy *phy)
 	/* Required to get phy pll lock successfully */
 	usleep_range(150, 160);
 
-	/*
-	 * Not all the SoCs have got a readable TCSR_PHY_CLK_SCHEME
-	 * register in the TCSR so, if there's none, use the default
-	 * value hardcoded in the configuration.
-	 */
-	qphy->has_se_clk_scheme = cfg->se_clk_scheme_default;
-
-	/*
-	 * read TCSR_PHY_CLK_SCHEME register to check if single-ended
-	 * clock scheme is selected. If yes, then disable differential
-	 * ref_clk and use single-ended clock, otherwise use differential
-	 * ref_clk only.
-	 */
-	if (qphy->tcsr) {
-		ret = regmap_read(qphy->tcsr, qphy->cfg->clk_scheme_offset,
-				  &clk_scheme);
-		if (ret) {
-			dev_err(&phy->dev, "failed to read clk scheme reg\n");
-			goto assert_phy_reset;
-		}
-
-		/* is it a differential clock scheme ? */
-		if (!(clk_scheme & PHY_CLK_SCHEME_SEL)) {
-			dev_vdbg(&phy->dev, "%s(): select differential clk\n",
-				 __func__);
-			qphy->has_se_clk_scheme = false;
-		} else {
-			dev_vdbg(&phy->dev, "%s(): select single-ended clk\n",
-				 __func__);
-		}
-	}
-
 	if (!qphy->has_se_clk_scheme) {
-		ret = clk_prepare_enable(qphy->ref_clk);
+		ret = clk_enable(qphy->ref_clk);
 		if (ret) {
 			dev_err(&phy->dev, "failed to enable ref clk, %d\n",
 				ret);
@@ -890,9 +907,12 @@ static int qusb2_phy_init(struct phy *phy)
 
 disable_ref_clk:
 	if (!qphy->has_se_clk_scheme)
-		clk_disable_unprepare(qphy->ref_clk);
+		clk_disable(qphy->ref_clk);
 assert_phy_reset:
 	reset_control_assert(qphy->phy_reset);
+unprepare_ref_clk:
+	if (!qphy->has_se_clk_scheme)
+		clk_unprepare(qphy->ref_clk);
 disable_ahb_clk:
 	clk_disable_unprepare(qphy->cfg_ahb_clk);
 disable_iface_clk:
