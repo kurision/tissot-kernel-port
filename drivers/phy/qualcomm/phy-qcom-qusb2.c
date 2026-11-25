@@ -891,23 +891,23 @@ static int qusb2_phy_init(struct phy *phy)
 	/*
 	 * Required to get phy pll lock successfully. Poll afterwards rather
 	 * than sampling once: a single sample has failed on resume.
+	 *
+	 * A missed lock is reported but not treated as fatal, as in the
+	 * vendor driver: failing init here fails the dwc3 core's system
+	 * resume, which leaves the controller half-initialised until the
+	 * cable is replugged.
 	 */
 	usleep_range(100, 110);
 
 	if (readb_poll_timeout(qphy->base + cfg->regs[QUSB2PHY_PLL_STATUS],
-			       val, val & cfg->mask_core_ready, 10, 1000)) {
-		dev_err(&phy->dev,
-			"QUSB2PHY pll lock failed: status reg = %x\n", val);
-		ret = -EBUSY;
-		goto disable_ref_clk;
-	}
+			       val, val & cfg->mask_core_ready, 10, 1000))
+		dev_warn(&phy->dev,
+			 "QUSB2PHY pll lock failed: status reg = %x\n", val);
+
 	qphy->phy_initialized = true;
 
 	return 0;
 
-disable_ref_clk:
-	if (!qphy->has_se_clk_scheme)
-		clk_disable(qphy->ref_clk);
 assert_phy_reset:
 	reset_control_assert(qphy->phy_reset);
 unprepare_ref_clk:
