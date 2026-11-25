@@ -194,8 +194,10 @@ Follow `Documentation/process/submitting-patches.rst`:
   `treewide:` only for a mechanical change across subsystems; `porting:`,
   `ci:` and `gitignore:` for this repository's tooling.
 - Body: why the change is needed and the evidence (log line, run, file and
-  line), and what was and was not verified. Write "not built" or
-  "unverified" when that is the case.
+  line). Do not add build or test status lines such as "Not built
+  locally" or "Unverified on device": the Mac never builds, CI is the
+  compile check, and device results belong in the conversation or in
+  `tissot-port-notes`, not in history.
 - One logical change per commit; every commit builds on its own. Stage only
   the files the commit is about.
 - Trailers:
