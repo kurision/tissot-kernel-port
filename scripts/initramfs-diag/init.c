@@ -1569,10 +1569,9 @@ static int rmt_storage_ready(int fd, time_t deadline)
  * /vendor/firmware_mnt/image on the command line; it is not rewritten here,
  * so the other directories it lists stay searchable.
  */
-static void harvest_modem_child(int log)
+static void harvest_modem_child(int log, int kmsg)
 {
 	time_t deadline = monotonic_seconds() + 240;
-	int kmsg = open("/dev/kmsg", O_RDONLY | O_NONBLOCK);
 	int mounted = 0, ready = 0;
 
 	say(log, "DIAG: fwlate: waiting for modem mount and rmt_storage\n");
@@ -1611,18 +1610,18 @@ static void harvest_modem_child(int log)
 	_exit(0);
 }
 
-static void harvest_modem_firmware(int log)
+static void harvest_modem_firmware(int log, int kmsg)
 {
 	pid_t pid = fork();
 
-	if (pid < 0) {
-		say(log, "DIAG: modem harvest: fork failed\n");
-		return;
-	}
 	if (!pid) {
 		setsid();
-		harvest_modem_child(log);
+		harvest_modem_child(log, kmsg);
 	}
+	if (kmsg >= 0)
+		close(kmsg);
+	if (pid < 0)
+		say(log, "DIAG: modem harvest: fork failed\n");
 }
 
 /*
@@ -2338,7 +2337,8 @@ static int guard_bootdevice(int proc)
 	return 0;
 }
 
-static void install_android_guard(int proc, int fstab, int contexts, int log)
+static void install_android_guard(int proc, int fstab, int contexts, int log,
+				  int kmsg)
 {
 	time_t deadline = monotonic_seconds() + 60;
 	int ns = -1, root = -1;
@@ -2378,6 +2378,8 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 		char c;
 
 		close(ready[1]);
+		if (kmsg >= 0)
+			close(kmsg);
 		/* Wait for the guard to be finished with its window. */
 		if (read(ready[0], &c, 1) <= 0) {
 			/* The guard failed; there is nothing to relabel. */
@@ -2487,7 +2489,7 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 #ifdef ANDROID_DISPLAY_GATE
 	guard_displaygate(proc, log);
 #endif
-	harvest_modem_firmware(log);
+	harvest_modem_firmware(log, kmsg);
 	guard_debuggable(proc, log);
 	/*
 	 * The guard's window is closed: the fstab and the vendor
@@ -3189,15 +3191,20 @@ static int launch_android(char **argv)
 		fstab = open("/ack-protected-fstab.qcom", O_RDONLY | O_CLOEXEC);
 		contexts = open("/ack-vendor-file-contexts", O_RDONLY | O_CLOEXEC);
 		if (proc >= 0 && fstab >= 0 && contexts >= 0) {
+			/* The guard changes root before it forks the modem child. */
+			int kmsg = open("/dev/kmsg", O_RDONLY | O_NONBLOCK);
 			pid_t guard = fork();
+
 			if (guard == 0) {
 				close(ready[1]);
 				close(in);
 				close(out);
 				if (kin >= 0)
 					close(kin);
-				install_android_guard(proc, fstab, contexts, klog);
+				install_android_guard(proc, fstab, contexts, klog, kmsg);
 			}
+			if (kmsg >= 0)
+				close(kmsg);
 			if (guard < 0)
 				say(klog, "DIAG: bootdevice guard fork failed; alias not released\n");
 		} else {
