@@ -2557,8 +2557,8 @@ static int guard_bootdevice(int proc)
 	} else if (errno != ENOENT) {
 		return -1;
 	}
-	/* With bootdevice=../.. the stock vendor wait resolves through soc.
-	 * Do not release that wait until both read-only overlays are verified. */
+	/* The stock vendor wait resolves through platform/soc. Do not release
+	 * that wait until both read-only overlays are verified. */
 	if (make_dir("/dev/block/platform/soc") ||
 	    stat("/dev/block/platform/soc", &st))
 		return -1;
@@ -2577,6 +2577,12 @@ static int guard_bootdevice(int proc)
 		errno = error;
 		return -1;
 	}
+	/*
+	 * The vendor fs trigger waits for platform/soc/${ro.boot.bootdevice},
+	 * the 4.19 path. Point it at the controller so the wait returns at
+	 * once instead of timing out. A failure here only costs that timeout.
+	 */
+	(void)symlink(BOOT_CONTROLLER, "/dev/block/platform/soc/7824900.sdhci");
 	return 0;
 }
 
