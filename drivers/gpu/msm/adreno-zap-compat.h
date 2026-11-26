@@ -99,24 +99,6 @@ static inline void adreno_zap_stage(struct device *dev,
 		enum adreno_zap_stage stage, int ret, phys_addr_t phys,
 		ssize_t size)
 {
-#if 0 /* Legacy GPU bring-up stage records. */
-	static unsigned long recorded;
-	struct adreno_zap_stage_rec rec = {
-		.magic = cpu_to_le64(ADRENO_ZAP_STAGE_MAGIC),
-		.stage = cpu_to_le32(stage),
-		.ret = cpu_to_le32(ret),
-		.ktime_ns = cpu_to_le64(ktime_get_ns()),
-		.mem_phys = cpu_to_le64(phys),
-		.size = cpu_to_le64(size),
-	};
-
-	/* Preserve the first visit when recovery restarts the GPU. */
-	if (stage >= ZAP_STAGE_UNSECURE_DONE &&
-	    test_and_set_bit(stage, &recorded))
-		return;
-
-	ramoops_stage_write(stage, &rec, sizeof(rec));
-#endif
 }
 
 static inline void *adreno_zap_subsystem_get(struct device *dev,

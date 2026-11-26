@@ -10,14 +10,6 @@
 #include "kgsl_device.h"
 #include "kgsl_sync.h"
 
-/*
- * run266 diagnostic sampling. See kgsl_sync_timeline_signal() for what the
- * diagnostic is for; the counters are per timeline and the event callback
- * has its own budget.
- */
-#define KGSL_SYNC_DIAG_FIRST	64
-#define KGSL_SYNC_DIAG_EVERY	64
-
 static void kgsl_sync_timeline_signal(struct kgsl_sync_timeline *timeline,
 	unsigned int timestamp);
 
@@ -110,33 +102,6 @@ static void kgsl_sync_fence_event_cb(struct kgsl_device *device,
 		struct kgsl_event_group *group, void *priv, int result)
 {
 	struct kgsl_sync_fence_event_priv *ev = priv;
-
-	/*
-	 * run266: the event callback firing is the proof that the kgsl event
-	 * group was processed, which is the proof that the GPU dispatcher is
-	 * still running. Sampled, for the same console reason.
-	 *
-	 * run271: the sampling has to continue for the whole boot, not stop
-	 * after the first 64 events. run271 showed the file-scope counter
-	 * printing only between t=148.8 s and t=152.1 s, so the event
-	 * callback looked like it had stopped when it had not: the
-	 * per-timeline fence releases carried on to t=680 s. Print the
-	 * first KGSL_SYNC_DIAG_FIRST events and then every
-	 * KGSL_SYNC_DIAG_EVERYth, for the life of the boot.
-	 */
-#if 0 /* Legacy event callback heartbeat. */
-	{
-		static unsigned int calls;
-
-		unsigned int n = calls;
-
-		if (n < KGSL_SYNC_DIAG_FIRST || !(n % KGSL_SYNC_DIAG_EVERY)) {
-			calls = n + 1;
-			pr_info("DIAG sync_fence_event ts=%u result=%d calls=%u\n",
-				ev->timestamp, result, calls);
-		}
-	}
-#endif
 
 	kgsl_sync_timeline_signal(ev->context->ktimeline, ev->timestamp);
 	kgsl_context_put(ev->context);
@@ -329,34 +294,11 @@ int kgsl_sync_timeline_create(struct kgsl_context *context)
 	return 0;
 }
 
-/*
- * run266 diagnostic: this is the boundary the display waits on.
- *
- * The MDSS waits for the GPU fence with dma_fence_wait_timeout(), which
- * only looks at the core's DMA_FENCE_FLAG_SIGNALED_BIT. For a kgsl sync
- * fence that bit is set by dma_fence_signal_locked(), and the only path
- * that reaches it for this fence is the loop below: kgsl_sync_timeline_signal()
- * walks the child list and calls dma_fence_is_signaled_locked(), which
- * calls the fence's own ->signalled callback and, when that says the
- * timestamp retired, signals the fence.
- *
- * kgsl_sync_timeline_signal() itself is only called from
- * kgsl_sync_fence_event_cb(), the callback of a kgsl event group, and
- * event groups are only processed by kgsl_process_event_groups(), which
- * the GPU dispatcher calls. So: no call here means the dispatcher stopped.
- *
- * The print is outside the timeline lock (it may sleep) and is sampled,
- * because the console is a 1 MiB ring.
- */
 static void kgsl_sync_timeline_signal(struct kgsl_sync_timeline *ktimeline,
 					unsigned int timestamp)
 {
 	unsigned long flags;
 	struct kgsl_sync_fence *kfence, *next;
-#if 0 /* Counters used only by the legacy heartbeat below. */
-	unsigned int pending = 0, signalled = 0;
-	unsigned int last = 0;
-#endif
 
 	if (!kref_get_unless_zero(&ktimeline->kref))
 		return;
@@ -367,36 +309,13 @@ static void kgsl_sync_timeline_signal(struct kgsl_sync_timeline *ktimeline,
 
 	list_for_each_entry_safe(kfence, next, &ktimeline->child_list_head,
 				child_list) {
-#if 0
-		pending++;
-#endif
 		if (dma_fence_is_signaled_locked(&kfence->fence)) {
 			list_del_init(&kfence->child_list);
 			dma_fence_put(&kfence->fence);
-#if 0
-			signalled++;
-#endif
 		}
 	}
-#if 0
-	last = ktimeline->last_timestamp;
-#endif
 
 	spin_unlock_irqrestore(&ktimeline->lock, flags);
-
-#if 0 /* Legacy timeline heartbeat; fence signalling above is unchanged. */
-	{
-		unsigned int n = ktimeline->diag.calls;
-
-		if (n < KGSL_SYNC_DIAG_FIRST || !(n % KGSL_SYNC_DIAG_EVERY)) {
-			ktimeline->diag.calls = n + 1;
-			pr_info("DIAG sync_timeline_signal name=%s ts=%u last=%u pending=%u signalled=%u calls=%u\n",
-				ktimeline->name, timestamp, last, pending,
-				signalled, ktimeline->diag.calls);
-		}
-	}
-#endif
-
 	kgsl_sync_timeline_put(ktimeline);
 }
 

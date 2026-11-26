@@ -1857,24 +1857,6 @@ static inline bool _check_context_is_sparse(struct kgsl_context *context,
 }
 
 
-/*
- * run225: a submission is the first real GPU work the port has ever done, and
- * the reset lands shortly after the first one in every run. Print the initial
- * burst in full so a death during the first render is attributable, then fall
- * back to a periodic heartbeat instead of flooding the ring.
- */
-static void kgsl_diag_submit(struct kgsl_device *device, const char *what)
-{
-#if 0 /* Legacy submission heartbeat. */
-	static atomic_t submits = ATOMIC_INIT(0);
-	int n = atomic_inc_return(&submits);
-
-	if (n <= 50 || !(n % 64))
-		dev_info(device->dev, "DIAG submit %s n=%d t_ns=%llu\n",
-			 what, n, ktime_get_ns());
-#endif
-}
-
 long kgsl_ioctl_rb_issueibcmds(struct kgsl_device_private *dev_priv,
 				      unsigned int cmd, void *data)
 {
@@ -1884,8 +1866,6 @@ long kgsl_ioctl_rb_issueibcmds(struct kgsl_device_private *dev_priv,
 	struct kgsl_drawobj *drawobj;
 	struct kgsl_drawobj_cmd *cmdobj;
 	long result = -EINVAL;
-
-	kgsl_diag_submit(device, "issueibcmds");
 
 	/* The legacy functions don't support synchronization commands */
 	if ((param->flags & (KGSL_DRAWOBJ_SYNC | KGSL_DRAWOBJ_MARKER)))
@@ -2081,8 +2061,6 @@ long kgsl_ioctl_gpu_command(struct kgsl_device_private *dev_priv,
 	unsigned int type;
 	long result;
 	unsigned int i = 0;
-
-	kgsl_diag_submit(device, "gpu_command");
 
 	type = _process_command_input(device, param->flags, param->numcmds,
 			param->numobjs, param->numsyncs);

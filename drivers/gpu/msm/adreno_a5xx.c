@@ -2068,27 +2068,6 @@ static void __iomem *diag_gpu_cb_base(struct kgsl_device *device)
 	return diag_gpu_cb;
 }
 
-
-#if 0 /* Legacy success-path SMMU sampling. Fault dumps remain enabled. */
-static void diag_gpu_smmu_state(struct adreno_device *adreno_dev,
-		struct adreno_ringbuffer *rb)
-{
-	struct kgsl_device *device = &adreno_dev->dev;
-	void __iomem *cb = diag_gpu_cb_base(device);
-	u32 sctlr = 0, fsr = 0;
-	u64 ttbr0 = 0;
-
-	if (cb) {
-		sctlr = readl_relaxed(cb + DIAG_CB_SCTLR);
-		ttbr0 = readq_relaxed(cb + DIAG_CB_TTBR0);
-		fsr = readl_relaxed(cb + DIAG_CB_FSR);
-	}
-
-
-
-}
-#endif
-
 /*
  * a5xx_dump_smmu_state() - DIAG: sample the gfx3d_user context bank at a
  * fault, so a bank that translates at draw time is separated from one that
@@ -2175,34 +2154,6 @@ static int a5xx_send_me_init(struct adreno_device *adreno_dev,
 {
 	unsigned int *cmds;
 	int ret;
-
-#if 0 /* Legacy ME_INIT logging and success-path register sampling. */
-	/*
-	 * Diagnostic-only snapshot at ME_INIT submit: clock/power state
-	 * sampled here (not on the slumber/teardown unwind) separates a
-	 * stopped clock from a mapped-but-idle stream in one boot.
-	 * Read-only; success-path behavior unchanged.
-	 */
-	{
-		struct kgsl_device *device = &adreno_dev->dev;
-		struct adreno_firmware *pm4_fw =
-			ADRENO_FW(adreno_dev, ADRENO_FW_PM4);
-		struct adreno_firmware *pfp_fw =
-			ADRENO_FW(adreno_dev, ADRENO_FW_PFP);
-		unsigned int rbbm = 0;
-
-		kgsl_regread(device, A5XX_RBBM_STATUS, &rbbm);
-		dev_info(device->dev,
-			 "DIAG ME_INIT submit: gfx_rate=%lu active_freq=%lu rbbm=%x secured=%u pm4=%p pfp=%p zap_loaded=%u state=%u requested=%u\n",
-			kgsl_get_clkrate(device->pwrctrl.grp_clks[0]),
-			kgsl_pwrctrl_active_freq(&device->pwrctrl), rbbm,
-			device->mmu.secured, pm4_fw->memdesc.hostptr,
-			pfp_fw->memdesc.hostptr, adreno_dev->zap_loaded,
-			device->state, device->requested_state);
-
-		diag_gpu_smmu_state(adreno_dev, rb);
-	}
-#endif
 
 	cmds = adreno_ringbuffer_allocspace(rb, 9);
 	if (IS_ERR(cmds))
