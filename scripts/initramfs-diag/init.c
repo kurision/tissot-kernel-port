@@ -1539,27 +1539,26 @@ static void start_remoteproc(const char *match, int log)
 	closedir(rp);
 }
 
-/* Whether a process whose comm is exactly @name is running. */
-static int process_running(const char *name)
+static int rmt_storage_ready(int fd, time_t deadline)
 {
-	char path[64], comm[32];
-	struct dirent *entry;
-	DIR *proc = opendir("/proc");
-	int found = 0;
+	static const char ready[] =
+		"rmt_storage:INFO:main: Done with init now waiting for messages!\n";
+	char buf[8192];
 
-	if (!proc)
-		return 0;
-	while (!found && (entry = readdir(proc))) {
-		if (entry->d_name[0] < '1' || entry->d_name[0] > '9')
+	while (monotonic_seconds() < deadline) {
+		ssize_t n = read(fd, buf, sizeof(buf) - 1);
+		const char *message;
+
+		if (n < 0 && (errno == EPIPE || errno == EINTR))
 			continue;
-		snprintf(path, sizeof(path), "/proc/%s/comm", entry->d_name);
-		if (read_file(path, comm, sizeof(comm)))
-			continue;
-		comm[strcspn(comm, "\n")] = '\0';
-		found = !strcmp(comm, name);
+		if (n <= 0)
+			return n < 0 && errno == EAGAIN ? 0 : -1;
+		buf[n] = '\0';
+		message = strchr(buf, ';');
+		if (message && !strncmp(message + 1, ready, sizeof(ready) - 1))
+			return 1;
 	}
-	closedir(proc);
-	return found;
+	return 0;
 }
 
 /*
@@ -1573,16 +1572,40 @@ static int process_running(const char *name)
 static void harvest_modem_child(int log)
 {
 	time_t deadline = monotonic_seconds() + 240;
+	int kmsg = open("/dev/kmsg", O_RDONLY | O_NONBLOCK);
+	int mounted = 0, ready = 0;
 
 	say(log, "DIAG: fwlate: waiting for modem mount and rmt_storage\n");
-	while (!mounts_contain("firmware_mnt") ||
-	       !process_running("rmt_storage")) {
-		if (monotonic_seconds() >= deadline) {
-			say(log, "DIAG: fwlate: modem mount or rmt_storage missing\n");
-			_exit(0);
+	while (monotonic_seconds() < deadline) {
+		if (!mounted && mounts_contain("firmware_mnt")) {
+			time_t fallback = monotonic_seconds() + 30;
+
+			mounted = 1;
+			if (fallback < deadline)
+				deadline = fallback;
 		}
+		if (kmsg >= 0 && !ready) {
+			int status = rmt_storage_ready(kmsg, deadline);
+
+			if (status != 0) {
+				close(kmsg);
+				kmsg = -1;
+				ready = status > 0;
+			}
+		}
+		if (mounted && ready)
+			break;
 		sleep(1);
 	}
+	if (kmsg >= 0)
+		close(kmsg);
+	if (!mounted) {
+		say(log, "DIAG: fwlate: modem never mounted\n");
+		_exit(0);
+	}
+	/* shortcut: vendor log text may change; use the mount if it goes missing. */
+	if (!ready)
+		say(log, "DIAG: fwlate: no rmt_storage ready message, using modem mount\n");
 	start_remoteproc("mba", log);
 	say(log, "DIAG: fwlate done\n");
 	_exit(0);
