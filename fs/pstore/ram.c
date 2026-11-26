@@ -1833,6 +1833,7 @@ static void ramoops_diag_dump_prev(void)
 #if IS_BUILTIN(CONFIG_PSTORE_RAM) && IS_ENABLED(CONFIG_BLOCK)
 	ramoops_reset_seen = 0;
 #endif
+	pr_info("DIAG mark boot_id %08x\n", boot_id);
 }
 
 static int ramoops_probe(struct platform_device *pdev)
