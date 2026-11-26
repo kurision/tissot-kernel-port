@@ -755,6 +755,7 @@ static int qusb2_phy_init(struct phy *phy)
 	const struct qusb2_phy_cfg *cfg = qphy->cfg;
 	unsigned int val = 0;
 	unsigned int clk_scheme;
+	bool retried = false;
 	int ret;
 
 	dev_vdbg(&phy->dev, "%s(): Initializing QUSB2 phy\n", __func__);
@@ -826,6 +827,7 @@ static int qusb2_phy_init(struct phy *phy)
 		}
 	}
 
+reset_phy:
 	/* Perform phy reset */
 	ret = reset_control_assert(qphy->phy_reset);
 	if (ret) {
@@ -891,18 +893,28 @@ static int qusb2_phy_init(struct phy *phy)
 	/*
 	 * Required to get phy pll lock successfully. Poll afterwards rather
 	 * than sampling once: a single sample has failed on resume.
-	 *
-	 * A missed lock is reported but not treated as fatal, as in the
-	 * vendor driver: failing init here fails the dwc3 core's system
-	 * resume, which leaves the controller half-initialised until the
-	 * cable is replugged.
 	 */
 	usleep_range(100, 110);
 
 	if (readb_poll_timeout(qphy->base + cfg->regs[QUSB2PHY_PLL_STATUS],
-			       val, val & cfg->mask_core_ready, 10, 1000))
+			       val, val & cfg->mask_core_ready, 10, 1000)) {
 		dev_warn(&phy->dev,
 			 "QUSB2PHY pll lock failed: status reg = %x\n", val);
+		if (of_device_is_compatible(phy->dev.of_node,
+					    "qcom,msm8953-qusb2-phy")) {
+			if (!qphy->has_se_clk_scheme)
+				clk_disable(qphy->ref_clk);
+
+			/* Keep the reference source prepared across the reset. */
+			if (!retried) {
+				retried = true;
+				goto reset_phy;
+			}
+
+			ret = -EBUSY;
+			goto assert_phy_reset;
+		}
+	}
 
 	qphy->phy_initialized = true;
 
