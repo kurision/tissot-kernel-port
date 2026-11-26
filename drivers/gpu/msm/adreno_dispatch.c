@@ -595,13 +595,7 @@ static int sendcmd(struct adreno_device *adreno_dev,
 			ADRENO_DRAWOBJ_PROFILE_COUNT;
 	}
 
-	if (adreno_is_a5xx(adreno_dev) && adreno_dev->zap_loaded)
-		adreno_zap_stage(device->dev, ZAP_STAGE_SUBMIT_ENTER,
-				 0, 0, 0);
 	ret = adreno_ringbuffer_submitcmd(adreno_dev, cmdobj, &time);
-	if (adreno_is_a5xx(adreno_dev) && adreno_dev->zap_loaded)
-		adreno_zap_stage(device->dev, ZAP_STAGE_SUBMIT_DONE,
-				 ret, 0, 0);
 
 	/*
 	 * On the first command, if the submission was successful, then read the
@@ -637,7 +631,6 @@ static int sendcmd(struct adreno_device *adreno_dev,
 			clear_bit(ADRENO_DISPATCHER_POWER, &dispatcher->priv);
 		}
 	}
-
 
 	if (ret) {
 		dispatcher->inflight--;
@@ -696,7 +689,6 @@ static int sendcmd(struct adreno_device *adreno_dev,
 		if (drawqueue_is_current(dispatch_q))
 			mod_timer(&dispatcher->timer, dispatch_q->expires);
 	}
-
 
 	/*
 	 * we just submitted something, readjust ringbuffer

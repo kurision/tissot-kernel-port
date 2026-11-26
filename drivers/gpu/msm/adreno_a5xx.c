@@ -1439,32 +1439,6 @@ static void _setup_throttling_counters(struct adreno_device *adreno_dev)
 }
 
 /*
- * a5xx_dump_bringup() - Diagnostic dump of RBBM/CP state during bring-up
- * @adreno_dev: Pointer to adreno device
- * @stage: Name of the bring-up step just reached
- *
- * Read-only. The hang is already latched by the time a5xx_send_me_init()
- * runs, so sampling the same registers at each bring-up step is what makes
- * the next boot name the step that latched it. CP_STATUS_1 carries the CP's
- * own view (and its AHB error fields once the CP is running).
- */
-static void a5xx_dump_bringup(struct adreno_device *adreno_dev,
-			      const char *stage)
-{
-	struct kgsl_device *device = &adreno_dev->dev;
-	unsigned int status, intstatus, rptr, wptr, base, cp_status, hw_fault;
-
-	kgsl_regread(device, A5XX_RBBM_STATUS, &status);
-	kgsl_regread(device, A5XX_RBBM_INT_0_STATUS, &intstatus);
-	kgsl_regread(device, A5XX_CP_RB_RPTR, &rptr);
-	kgsl_regread(device, A5XX_CP_RB_WPTR, &wptr);
-	kgsl_regread(device, A5XX_CP_RB_BASE, &base);
-	kgsl_regread(device, A5XX_CP_STATUS_1, &cp_status);
-	kgsl_regread(device, A5XX_CP_HW_FAULT, &hw_fault);
-
-}
-
-/*
  * a5xx_start() - Device start
  * @adreno_dev: Pointer to adreno device
  *
@@ -1477,7 +1451,6 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 	unsigned int bit;
 	int ret;
-	a5xx_dump_bringup(adreno_dev, "start-entry");
 
 	if (adreno_is_a530(adreno_dev) && ADRENO_FEATURE(adreno_dev, ADRENO_LM)
 			&& adreno_dev->lm_threshold_count == 0) {
@@ -1508,7 +1481,6 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 	 * useful information on failure
 	 */
 	kgsl_regwrite(device, A5XX_RBBM_AHB_CNTL0, 0x00000001);
-	a5xx_dump_bringup(adreno_dev, "ahb-reporting-on");
 
 	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_FAULT_DETECT_MASK)) {
 		/*
@@ -1704,7 +1676,6 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 
 	a5xx_preemption_start(adreno_dev);
 	a5xx_protect_init(adreno_dev);
-	a5xx_dump_bringup(adreno_dev, "preemption-done");
 }
 
 /*
@@ -2203,16 +2174,13 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev)
 
 	adreno_writereg64(adreno_dev, ADRENO_REG_CP_RB_BASE,
 			ADRENO_REG_CP_RB_BASE_HI, rb->buffer_desc.gpuaddr);
-	a5xx_dump_bringup(adreno_dev, "rb-programmed");
 
 	ret = a5xx_microcode_load(adreno_dev);
 	if (ret)
 		return ret;
-	a5xx_dump_bringup(adreno_dev, "microcode-loaded");
 
 	/* clear ME_HALT to start micro engine */
 	adreno_writereg(adreno_dev, ADRENO_REG_CP_ME_CNTL, 0);
-	a5xx_dump_bringup(adreno_dev, "me-unhalted");
 
 	ret = a5xx_send_me_init(adreno_dev, rb);
 	if (ret)
@@ -2220,9 +2188,6 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev)
 
 	/* GPU comes up in secured mode, make it unsecured by default */
 	ret = adreno_set_unsecured_mode(adreno_dev, rb);
-	if (adreno_dev->zap_loaded)
-		adreno_zap_stage(device->dev, ZAP_STAGE_UNSECURE_DONE,
-				 ret, 0, 0);
 	if (ret)
 		return ret;
 
@@ -2230,13 +2195,7 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev)
 	if (ret)
 		return ret;
 
-	if (adreno_dev->zap_loaded)
-		adreno_zap_stage(device->dev, ZAP_STAGE_POST_START_ENTER,
-				 0, 0, 0);
 	ret = a5xx_post_start(adreno_dev);
-	if (adreno_dev->zap_loaded)
-		adreno_zap_stage(device->dev, ZAP_STAGE_POST_START_DONE,
-				 ret, 0, 0);
 
 	return ret;
 }

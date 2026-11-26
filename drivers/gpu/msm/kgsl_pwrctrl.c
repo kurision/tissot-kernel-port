@@ -2680,16 +2680,10 @@ void kgsl_idle_check(struct work_struct *work)
 							idle_check_ws);
 	int ret = 0;
 	unsigned int requested_state;
-	bool trace;
 
 	mutex_lock(&device->mutex);
 
 	requested_state = device->requested_state;
-	trace = ADRENO_DEVICE(device)->zap_loaded &&
-		adreno_is_a5xx(ADRENO_DEVICE(device));
-	if (trace)
-		adreno_zap_stage(device->dev, ZAP_STAGE_IDLE_ENTER,
-				 0, device->state, requested_state);
 
 	if ((requested_state != KGSL_STATE_NONE) &&
 		(device->state == KGSL_STATE_ACTIVE
@@ -2734,9 +2728,6 @@ done:
 					device->pwrctrl.interval_timeout);
 	}
 	kgsl_pwrscale_update(device);
-	if (trace)
-		adreno_zap_stage(device->dev, ZAP_STAGE_IDLE_DONE,
-				 ret, device->state, requested_state);
 	mutex_unlock(&device->mutex);
 }
 EXPORT_SYMBOL(kgsl_idle_check);
@@ -3191,14 +3182,10 @@ err:
 int kgsl_pwrctrl_change_state(struct kgsl_device *device, int state)
 {
 	int status = 0;
-	bool trace;
 
 	if (device->state == state)
 		return status;
 	kgsl_pwrctrl_request_state(device, state);
-
-	trace = ADRENO_DEVICE(device)->zap_loaded &&
-		adreno_is_a5xx(ADRENO_DEVICE(device));
 
 	/* Work through the legal state transitions */
 	switch (state) {
@@ -3209,31 +3196,13 @@ int kgsl_pwrctrl_change_state(struct kgsl_device *device, int state)
 		status = _aware(device);
 		break;
 	case KGSL_STATE_ACTIVE:
-		if (trace)
-			adreno_zap_stage(device->dev, ZAP_STAGE_ACTIVE_ENTER,
-					 0, device->state, state);
 		status = _wake(device);
-		if (trace)
-			adreno_zap_stage(device->dev, ZAP_STAGE_ACTIVE_DONE,
-					 status, device->state, state);
 		break;
 	case KGSL_STATE_NAP:
-		if (trace)
-			adreno_zap_stage(device->dev, ZAP_STAGE_NAP_ENTER,
-					 0, device->state, state);
 		status = _nap(device);
-		if (trace)
-			adreno_zap_stage(device->dev, ZAP_STAGE_NAP_DONE,
-					 status, device->state, state);
 		break;
 	case KGSL_STATE_SLUMBER:
-		if (trace)
-			adreno_zap_stage(device->dev, ZAP_STAGE_SLUMBER_ENTER,
-					 0, device->state, state);
 		status = _slumber(device);
-		if (trace)
-			adreno_zap_stage(device->dev, ZAP_STAGE_SLUMBER_DONE,
-					 status, device->state, state);
 		break;
 	case KGSL_STATE_SUSPEND:
 		status = _suspend(device);

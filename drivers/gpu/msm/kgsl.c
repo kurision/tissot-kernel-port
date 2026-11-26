@@ -1209,10 +1209,7 @@ static int kgsl_release(struct inode *inodep, struct file *filep)
 
 static int kgsl_open_device(struct kgsl_device *device)
 {
-	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	int result = 0;
-	int active_ret;
-	bool trace;
 
 	mutex_lock(&device->mutex);
 	if (device->open_count == 0) {
@@ -1230,10 +1227,6 @@ static int kgsl_open_device(struct kgsl_device *device)
 			goto err;
 
 		result = device->ftbl->start(device, 0);
-		trace = adreno_dev->zap_loaded && adreno_is_a5xx(adreno_dev);
-		if (trace)
-			adreno_zap_stage(device->dev, ZAP_STAGE_OPEN_START_DONE,
-					 result, task_pid_nr(current), device->state);
 		if (result)
 			goto err;
 		/*
@@ -1241,14 +1234,8 @@ static int kgsl_open_device(struct kgsl_device *device)
 		 * we start suspend or FT.
 		 */
 		complete_all(&device->hwaccess_gate);
-		active_ret = kgsl_pwrctrl_change_state(device, KGSL_STATE_ACTIVE);
-		if (trace)
-			adreno_zap_stage(device->dev, ZAP_STAGE_OPEN_ACTIVE_DONE,
-					 active_ret, task_pid_nr(current), device->state);
+		kgsl_pwrctrl_change_state(device, KGSL_STATE_ACTIVE);
 		kgsl_active_count_put(device);
-		if (trace)
-			adreno_zap_stage(device->dev, ZAP_STAGE_OPEN_PUT_DONE,
-					 0, task_pid_nr(current), device->state);
 	}
 	device->open_count++;
 err:
@@ -1264,7 +1251,6 @@ err:
 static int kgsl_open(struct inode *inodep, struct file *filep)
 {
 	int result;
-	bool trace = false;
 	struct kgsl_device_private *dev_priv;
 	struct kgsl_device *device;
 	unsigned int minor = iminor(inodep);
@@ -1294,11 +1280,6 @@ static int kgsl_open(struct inode *inodep, struct file *filep)
 	filep->private_data = dev_priv;
 
 	result = kgsl_open_device(device);
-	trace = ADRENO_DEVICE(device)->zap_loaded &&
-		adreno_is_a5xx(ADRENO_DEVICE(device));
-	if (trace)
-		adreno_zap_stage(device->dev, ZAP_STAGE_OPEN_DEVICE_DONE,
-				 result, task_pid_nr(current), READ_ONCE(device->state));
 	if (result)
 		goto err;
 
@@ -1307,14 +1288,7 @@ static int kgsl_open(struct inode *inodep, struct file *filep)
 	 * after the first start so that the global pagetable mappings
 	 * are set up before we create the per-process pagetable.
 	 */
-	if (trace)
-		adreno_zap_stage(device->dev, ZAP_STAGE_PROCESS_OPEN_ENTER,
-				 0, task_pid_nr(current), READ_ONCE(device->state));
 	dev_priv->process_priv = kgsl_process_private_open(device);
-	if (trace)
-		adreno_zap_stage(device->dev, ZAP_STAGE_PROCESS_OPEN_DONE,
-				 PTR_ERR_OR_ZERO(dev_priv->process_priv),
-				 task_pid_nr(current), READ_ONCE(device->state));
 	if (IS_ERR(dev_priv->process_priv)) {
 		result = PTR_ERR(dev_priv->process_priv);
 		kgsl_close_device(device);
@@ -1327,9 +1301,6 @@ err:
 		kfree(dev_priv);
 		pm_runtime_put(&device->pdev->dev);
 	}
-	if (trace)
-		adreno_zap_stage(device->dev, ZAP_STAGE_OPEN_DONE,
-				 result, task_pid_nr(current), READ_ONCE(device->state));
 	return result;
 }
 
