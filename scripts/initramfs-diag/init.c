@@ -1855,67 +1855,6 @@ static void relabel_sysfs_for_rom_policy(int log)
 }
 
 /*
- * Downstream adsprpcd opens /dev/adsprpc-smd, but upstream FastRPC
- * registers /dev/fastrpc-adsp (misc). Same device, different name:
- * wait for the upstream node, then mknod the downstream alias with
- * identical numbers (mode 0666 for the daemon). Detached fork.
- */
-static void adsprpc_compat_child(int log)
-{
-	time_t deadline = monotonic_seconds() + 240;
-	char message[256], dev[32];
-	unsigned int maj, min;
-	ssize_t n;
-	say(log, "DIAG: adsprpc compat: waiting for fastrpc-adsp\n");
-	for (;;) {
-		if (!read_file("/sys/class/misc/fastrpc-adsp/dev", dev,
-			       sizeof(dev)) &&
-		    sscanf(dev, "%u:%u", &maj, &min) == 2)
-			break;
-		if (monotonic_seconds() >= deadline) {
-			say(log, "DIAG: adsprpc compat: fastrpc-adsp never appeared\n");
-			_exit(0);
-		}
-		sleep(2);
-	}
-	if (mknod("/dev/adsprpc-smd", 0600 | S_IFCHR, makedev(maj, min)) &&
-	    errno != EEXIST) {
-		snprintf(message, sizeof(message),
-			 "DIAG: adsprpc compat: mknod errno=%d\n", errno);
-		say(log, message);
-		_exit(0);
-	}
-	/* Stock identity (read off live stock): 0664 system:system
-	 * u:object_r:qdsp_device:s0. Without the label the daemon gets
-	 * avc denied on the tmpfs default context.
-	 */
-	chmod("/dev/adsprpc-smd", 0664);
-	if (chown("/dev/adsprpc-smd", 1000, 1000))
-		say(log, "DIAG: adsprpc compat: chown failed\n");
-	n = setxattr("/dev/adsprpc-smd", "security.selinux",
-		     "u:object_r:qdsp_device:s0",
-		     sizeof("u:object_r:qdsp_device:s0") - 1, 0);
-	snprintf(message, sizeof(message),
-		 "DIAG: adsprpc compat: alias %u:%u label ret=%d errno=%d\n",
-		 maj, min, (int)n, n ? errno : 0);
-	say(log, message);
-	_exit(0);
-}
-
-static void adsprpc_compat_fork(int log)
-{
-	pid_t pid = fork();
-
-	if (pid < 0) {
-		say(log, "DIAG: adsprpc compat: fork failed\n");
-		return;
-	}
-	if (!pid) {
-		setsid();
-		adsprpc_compat_child(log);
-	}
-}
-/*
  * Debuggable props. Our /init replaced first-stage init, so the ramdisk
  * prop.default is never loaded; second-stage init takes ro.secure=1 /
  * ro.debuggable=0 from the system/vendor partitions and adbd stays shell.
@@ -2526,7 +2465,6 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 	guard_displaygate(proc, log);
 #endif
 	harvest_modem_firmware(log);
-	adsprpc_compat_fork(log);
 	guard_debuggable(proc, log);
 	/*
 	 * The guard's window is closed: the fstab and the vendor
