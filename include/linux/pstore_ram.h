@@ -40,19 +40,14 @@ struct ramoops_platform_data {
 	struct persistent_ram_ecc_info ecc_info;
 };
 
-/* DEBUG run117 (tissot): write a tag+value marker into 4K carved from
- * the ramoops dmesg area (between dmesg and console zones; the 1MB
- * reservation packs zones with zero slack). Works from any context
- * (no sleep, no VFS); slots are disjoint and idempotent so no
- * locking. The logdump snapshot copies the page every 2 s; a page
- * with valid magic also dumps at the next port boot's probe. The last
- * 8 bytes hold magic + boot id. Implemented in fs/pstore/ram.c;
- * out-of-range slots warn and drop.
+/*
+ * 4K carved from the ramoops dmesg area (between the dmesg and console
+ * zones). The reset-capture path saves it with the logdump; the last
+ * 8 bytes hold a magic and the boot id that ties a logdump to its boot.
  */
 #define RAMOOPS_DIAG_MARK_SIZE	SZ_4K
 #define RAMOOPS_DIAG_MARK_HDR	(RAMOOPS_DIAG_MARK_SIZE - 8)
 #define RAMOOPS_DIAG_MARK_MAGIC	0x4B52414D	/* "MARK" */
-void ramoops_diag_mark(loff_t slot, u32 tag, u32 val);
 
 /* run225: durable + console note for a kernel-initiated restart. */
 void ramoops_reset_note(const char *what);
