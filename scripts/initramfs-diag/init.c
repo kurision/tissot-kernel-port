@@ -1439,48 +1439,10 @@ static void guard_displaygate(int proc, int log)
 }
 #endif
 
-static int stage_firmware_file(const char *src, const char *dest, long *bytes)
-{
-	char buf[8192];
-	int in, out, error = 0;
-	ssize_t n;
-
-	*bytes = 0;
-	in = open(src, O_RDONLY | O_CLOEXEC);
-	if (in < 0)
-		return errno;
-	out = open(dest, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0444);
-	if (out < 0) {
-		error = errno;
-		close(in);
-		return error;
-	}
-	for (;;) {
-		n = read(in, buf, sizeof(buf));
-		if (n < 0 && errno == EINTR)
-			continue;
-		if (n < 0) {
-			error = errno;
-			break;
-		}
-		if (!n)
-			break;
-		if (write_all(out, buf, (size_t)n)) {
-			error = errno;
-			break;
-		}
-		*bytes += n;
-	}
-	close(in);
-	if (close(out) && !error)
-		error = errno;
-	return error;
-}
-
 /*
- * Wait for the modem partition, retain the working GPU firmware search
- * directories, and start the autoboot-disabled MSS. Leave the already
- * running ADSP and WCNSS alone. Detached fork, never blocks the guard or boot.
+ * Start the autoboot-disabled MSS once its firmware and the remote storage
+ * service are up. Leave the already running ADSP and WCNSS alone. Detached
+ * fork, never blocks the guard or boot.
  */
 static int read_file(const char *path, char *buf, size_t len)
 {
@@ -1577,94 +1539,50 @@ static void start_remoteproc(const char *match, int log)
 	closedir(rp);
 }
 
+/* Whether a process whose comm is exactly @name is running. */
+static int process_running(const char *name)
+{
+	char path[64], comm[32];
+	struct dirent *entry;
+	DIR *proc = opendir("/proc");
+	int found = 0;
+
+	if (!proc)
+		return 0;
+	while (!found && (entry = readdir(proc))) {
+		if (entry->d_name[0] < '1' || entry->d_name[0] > '9')
+			continue;
+		snprintf(path, sizeof(path), "/proc/%s/comm", entry->d_name);
+		if (read_file(path, comm, sizeof(comm)))
+			continue;
+		comm[strcspn(comm, "\n")] = '\0';
+		found = !strcmp(comm, name);
+	}
+	closedir(proc);
+	return found;
+}
+
+/*
+ * The MSS driver leaves auto_boot off because the modem must not boot
+ * before the remote storage service can answer it, and expects userspace
+ * to start it once that service is up. On this ROM that service is the
+ * vendor rmt_storage daemon. The firmware search path already lists
+ * /vendor/firmware_mnt/image on the command line; it is not rewritten here,
+ * so the other directories it lists stay searchable.
+ */
 static void harvest_modem_child(int log)
 {
 	time_t deadline = monotonic_seconds() + 240;
-	char message[512];
-	int pathset = 0;
-	int patherr = 0;
-	/*
-	 * Whole-partition harvest first: needs no mounts (devtmpfs block
-	 * nodes exist from boot) and sidesteps all file-level DAC issues.
-	 * Shell cannot read mmcblk0p1 (brw------- root); this root child
-	 * can. /sdlog is vfat and host-readable; adb pull is a fallback.
-	 */
-	{
-		long bytes = 0;
-		int error = 0;
 
-		/* /sdlog must be the card, not ramdisk: refuse unless the
-		 * mirror log the SD setup creates is already there.
-		 */
-		if (!mounts_contain("/sdlog")) {
-			snprintf(message, sizeof(message),
-				 "DIAG: fwlate partition skipped: no sdlog mount\n");
-			say(log, message);
-		} else {
-			make_dir("/sdlog/fwpart");
-			error = stage_firmware_file("/dev/block/mmcblk0p1",
-						    "/sdlog/fwpart/modem_a.img",
-						    &bytes);
-		}
-		snprintf(message, sizeof(message),
-			 "DIAG: fwlate partition mmcblk0p1 bytes=%ld errno=%d\n",
-			 bytes, error);
-		say(log, message);
-	}
-
-	say(log, "DIAG: fwlate: waiting for modem mount\n");
-	for (;;) {
-		if (mounts_contain("firmware_mnt"))
-			break;
+	say(log, "DIAG: fwlate: waiting for modem mount and rmt_storage\n");
+	while (!mounts_contain("firmware_mnt") ||
+	       !process_running("rmt_storage")) {
 		if (monotonic_seconds() >= deadline) {
-			say(log, "DIAG: fwlate: modem never mounted\n");
+			say(log, "DIAG: fwlate: modem mount or rmt_storage missing\n");
 			_exit(0);
 		}
-		sleep(2);
+		sleep(1);
 	}
-	/*
-	 * The diag init still runs in the kernel domain here: the Android
-	 * init exec (and the transition to init) happens after this child is
-	 * forked.  The kernel domain may be denied the generic sysfs write,
-	 * and the boot command line already carries the image path, so treat
-	 * an already-correct path as success.  Log uid/euid/context and the
-	 * exact errno: run336 showed EACCES even though a root su shell can
-	 * rewrite the same file.
-	 */
-	{
-		char current[256] = "";
-		char context[64] = "";
-
-		if (read_file("/proc/self/attr/current", context, sizeof(context)))
-			context[0] = '\0';
-		context[strcspn(context, "\r\n")] = '\0';
-		if (attribute("/sys/module/firmware_class/parameters/path",
-			       "/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image"))
-			patherr = errno;
-		if (read_file("/sys/module/firmware_class/parameters/path",
-			      current, sizeof(current)))
-			current[0] = '\0';
-		current[strcspn(current, "\r\n")] = '\0';
-		pathset = !patherr;
-		if (!pathset && !strcmp(current,
-			"/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image"))
-			pathset = 2;
-		snprintf(message, sizeof(message),
-			 "DIAG: fwlate: custom path set=%d errno=%d uid=%d euid=%d ctx=%s path=%s\n",
-			 pathset, patherr, (int)getuid(), (int)geteuid(),
-			 context[0] ? context : "?", current[0] ? current : "?");
-		say(log, message);
-	}
-	if (!pathset)
-		_exit(0);
-	sleep(2);
-	/*
-	 * adsp and wcnss are already up: the boot loaded adsp.mdt and
-	 * wcnss.mdt.  Rebinding them here unbound them and then failed to
-	 * bind again because the device/driver symlink disappears with the
-	 * unbind.  Only the
-	 * MSS is autoboot-disabled in this port.
-	 */
 	start_remoteproc("mba", log);
 	say(log, "DIAG: fwlate done\n");
 	_exit(0);
