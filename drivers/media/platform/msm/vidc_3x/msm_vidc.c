@@ -763,7 +763,7 @@ int dqbuf_cache_operations(struct msm_vidc_inst *inst,
 					offset = 0;
 					size = b->m.planes[i].bytesused+
 						b->m.planes[i].data_offset;
-					cache_op = SMEM_CACHE_INVALIDATE;
+					cache_op = SMEM_CACHE_INVALIDATE_FOR_CPU;
 				}
 			}
 		}

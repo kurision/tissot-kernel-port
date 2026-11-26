@@ -616,6 +616,7 @@ int msm_smem_free(struct msm_smem *smem)
 int msm_smem_cache_operations(struct dma_buf *dbuf,
 	enum smem_cache_ops cache_op, unsigned long offset, unsigned long size)
 {
+	enum dma_data_direction cpu_dir;
 	int rc = 0;
 	unsigned long flags = 0;
 
@@ -645,8 +646,12 @@ int msm_smem_cache_operations(struct dma_buf *dbuf,
 				offset, size);
 		break;
 	case SMEM_CACHE_INVALIDATE:
-		rc = dma_buf_begin_cpu_access_partial(dbuf, DMA_TO_DEVICE,
-				offset, size);
+	case SMEM_CACHE_INVALIDATE_FOR_CPU:
+		/* DMA_TO_DEVICE CPU sync skips invalidation on arm64. */
+		cpu_dir = cache_op == SMEM_CACHE_INVALIDATE_FOR_CPU ?
+			DMA_FROM_DEVICE : DMA_TO_DEVICE;
+		rc = dma_buf_begin_cpu_access_partial(dbuf, cpu_dir,
+						      offset, size);
 		if (rc)
 			break;
 		rc = dma_buf_end_cpu_access_partial(dbuf, DMA_FROM_DEVICE,
