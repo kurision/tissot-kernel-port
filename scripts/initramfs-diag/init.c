@@ -1439,14 +1439,6 @@ static void guard_displaygate(int proc, int log)
 }
 #endif
 
-/*
- * GPU firmware staging. Upstream adreno requests qcom/a530_pm4.fw,
- * filesystem firmware loader, which this early only searches the ramdisk
- * (/lib/firmware); the blobs live on /vendor/firmware, unreadable to
- * shell/adb. This process is root in PID 1's mount namespace after vendor
- * is up, so copy them into the ramdisk before the deferred GPU probe runs.
- * Missing files are logged, never fatal.
- */
 static int stage_firmware_file(const char *src, const char *dest, long *bytes)
 {
 	char buf[8192];
@@ -1485,126 +1477,6 @@ static int stage_firmware_file(const char *src, const char *dest, long *bytes)
 	return error;
 }
 
-static const char b64digits[] =
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static void exfil_blob(const char *src, const char *base, int log)
-{
-	static char data[128 * 1024];
-	char message[256], chunk[200];
-	struct stat st;
-	int in = open(src, O_RDONLY | O_CLOEXEC);
-	off_t offset = 0;
-	ssize_t n;
-	size_t total, seq = 0, at = 0;
-
-	if (in < 0) {
-		snprintf(message, sizeof(message), "DIAG: fwblob %s open errno=%d\n",
-			 base, errno);
-		say(log, message);
-		return;
-	}
-	if (fstat(in, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
-	    st.st_size > (off_t)sizeof(data)) {
-		snprintf(message, sizeof(message), "DIAG: fwblob %s stat errno=%d\n",
-			 base, errno);
-		say(log, message);
-		close(in);
-		return;
-	}
-	while (offset < st.st_size) {
-		n = pread(in, data + offset,
-			  (size_t)(st.st_size - offset), offset);
-		if (n < 0 && errno == EINTR)
-			continue;
-		if (n <= 0)
-			break;
-		offset += n;
-	}
-	close(in);
-	total = (size_t)offset;
-	while (at < total) {
-		size_t step = total - at > 144 ? 144 : total - at;
-		size_t groups = step / 3, rem = step % 3, i, o = 0;
-
-		for (i = 0; i < groups * 3; i += 3) {
-			unsigned triple = ((unsigned char)data[at + i] << 16) |
-				((unsigned char)data[at + i + 1] << 8) |
-				(unsigned char)data[at + i + 2];
-
-			chunk[o++] = b64digits[(triple >> 18) & 63];
-			chunk[o++] = b64digits[(triple >> 12) & 63];
-			chunk[o++] = b64digits[(triple >> 6) & 63];
-			chunk[o++] = b64digits[triple & 63];
-		}
-		if (rem) {
-			unsigned triple = (unsigned char)data[at + groups * 3] << 16;
-
-			if (rem == 2)
-				triple |= (unsigned char)data[at + groups * 3 + 1] << 8;
-			chunk[o++] = b64digits[(triple >> 18) & 63];
-			chunk[o++] = b64digits[(triple >> 12) & 63];
-			chunk[o++] = rem == 2 ? b64digits[(triple >> 6) & 63] : '=';
-			chunk[o++] = '=';
-		}
-		chunk[o] = '\0';
-		snprintf(message, sizeof(message), "DIAG: fwblob %s %zu %s\n",
-			 base, seq++, chunk);
-		say(log, message);
-		at += step;
-	}
-}
-
-static void guard_firmware(int log)
-{
-	static const char *const dests[] = {
-		"/lib/firmware/qcom/a530_pm4.fw",
-		"/lib/firmware/qcom/a530_pfp.fw",
-		"/lib/firmware/a506_zap.mdt",
-		"/lib/firmware/a506_zap.b00",
-		"/lib/firmware/a506_zap.b01",
-		"/lib/firmware/a506_zap.b02",
-	};
-	static const char *const bases[] = {
-		"a530_pm4.fw",
-		"a530_pfp.fw",
-		"a506_zap.mdt",
-		"a506_zap.b00",
-		"a506_zap.b01",
-		"a506_zap.b02",
-	};
-	char message[256], src[128], exfil[128];
-	size_t i;
-
-	make_dir("/lib");
-	make_dir("/lib/firmware");
-	make_dir("/lib/firmware/qcom");
-	make_dir("/dev/fw-exfil");
-	for (i = 0; i < sizeof(dests) / sizeof(dests[0]); i++) {
-		int error, xerror;
-		long bytes = 0, xbytes = 0;
-
-		snprintf(src, sizeof(src), "/vendor/firmware/%s", bases[i]);
-		if (access(src, R_OK) &&
-		    snprintf(src, sizeof(src), "/vendor/firmware/qcom/%s",
-			     bases[i]) < 0)
-			src[0] = '\0';
-		error = *src ? stage_firmware_file(src, dests[i], &bytes) :
-			ENOENT;
-		snprintf(exfil, sizeof(exfil), "/dev/fw-exfil/%s", bases[i]);
-		xerror = *src ? stage_firmware_file(src, exfil, &xbytes) :
-			ENOENT;
-		snprintf(message, sizeof(message),
-			 "DIAG: firmware %s bytes=%ld errno=%d\n",
-			 dests[i], bytes, error);
-		say(log, message);
-		snprintf(message, sizeof(message), "DIAG: exfil %s bytes=%ld errno=%d\n",
-			 exfil, xbytes, xerror);
-		say(log, message);
-		if (*src)
-			exfil_blob(src, bases[i], log);
-	}
-}
 /*
  * Wait for the modem partition, retain the working GPU firmware search
  * directories, and start the autoboot-disabled MSS. Leave the already
@@ -2735,7 +2607,6 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 #ifdef ANDROID_DISPLAY_GATE
 	guard_displaygate(proc, log);
 #endif
-	guard_firmware(log);
 	harvest_modem_firmware(log);
 	adsprpc_compat_fork(log);
 	guard_debuggable(proc, log);
