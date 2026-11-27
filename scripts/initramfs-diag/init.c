@@ -1584,7 +1584,8 @@ static void harvest_modem_child(int log, int kmsg)
 				deadline = fallback;
 		}
 		if (kmsg >= 0 && !ready) {
-			int status = rmt_storage_ready(kmsg, deadline);
+			/* A short slice keeps the mount check running under a log flood. */
+			int status = rmt_storage_ready(kmsg, monotonic_seconds() + 1);
 
 			if (status != 0) {
 				close(kmsg);
