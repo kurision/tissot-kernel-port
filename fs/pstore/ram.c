@@ -630,22 +630,6 @@ static BIN_ATTR_ADMIN_RO(ramoops_raw, SZ_1M);
 #define RAMOOPS_SNAP_SLOTS		2
 #define RAMOOPS_SNAP_INTERVAL_MS	2000
 /*
- * 0 since 2026-10-24: the dim-screen boot-death era this monitored is closed,
- * and the 2026-10-23 camera diagnosis no longer needs a pre-probe flush (its
- * JPEG failures show in dmesg). Explicit panic capture and orderly-reset
- * tails remain; with this 0 the camera late-init gates are released at
- * snapshotter start instead of waiting for a flush that never comes.
- */
-#define RAMOOPS_PERIODIC_SNAPSHOTS	0
-/*
- * run225: once the first KGSL stage record lands, shorten the cadence so the
- * last sample falls inside the pre-reset blind window (~150 ms wide). The
- * 1 MiB console payload makes this ~5 MiB/s, so it is bounded to the period
- * between the GPU starting and the reset rather than the whole boot.
- */
-#define RAMOOPS_SNAP_FAST_MS		200
-
-/*
  * run226: bounded busy-wait used by ramoops_panic_snapshot(). A flushed
  * 1 MiB console sample plus the tail commit normally completes in tens of
  * milliseconds (the 41.7 s and 41.77 s headers in run225 are ~56 ms apart),
@@ -769,11 +753,6 @@ int ramoops_wait_snapshot_ready(unsigned int timeout_ms)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ramoops_wait_snapshot_ready);
-
-/* run225: set by the first stage record (KGSL up), never cleared. */
-static bool ramoops_snap_fast;
-
-static void ramoops_debug_apps_wdt(void);
 
 static_assert(sizeof(struct ramoops_snap_header) == RAMOOPS_SNAP_HDR_SIZE);
 static_assert(RAMOOPS_TAIL_OFFSET +
@@ -1101,21 +1080,17 @@ out:
 static int ramoops_snap_thread(void *unused)
 {
 	struct ramoops_snapper *s = &ramoops_snapper;
-	unsigned long timeout = msecs_to_jiffies(RAMOOPS_SNAP_INTERVAL_MS);
 	int ret;
 	bool previous_attempted = false;
 	(void)unused;
 
-	if (!RAMOOPS_PERIODIC_SNAPSHOTS) {
-		/*
-		 * No periodic sample will flush, so the camera late-init
-		 * callers parked on ramoops_snapshot_ready would burn their
-		 * 10 s timeout and then skip registration entirely. Release
-		 * them at once; the panic completion still captures on
-		 * demand.
-		 */
-		complete_all(&ramoops_snapshot_ready);
-	}
+	/*
+	 * No periodic sample will flush, so the camera late-init callers
+	 * parked on ramoops_snapshot_ready would burn their 10 s timeout and
+	 * then skip registration entirely. Release them at once; the panic
+	 * completion still captures on demand.
+	 */
+	complete_all(&ramoops_snapshot_ready);
 
 	while (!kthread_should_stop()) {
 		if (!s->file) {
@@ -1144,27 +1119,16 @@ static int ramoops_snap_thread(void *unused)
 		}
 
 		/*
-		 * Without periodic sampling, only an explicit panic completion may
-		 * request a snapshot. Sleep until it arrives instead of waking every
-		 * RAMOOPS_SNAP_INTERVAL_MS: the timeout was only there to let
-		 * kthread_stop() drain a worker that had no other wakeup. The stop
-		 * path now completes the wake before kthread_stop(), so the worker
-		 * stays parked between panics. A failed explicit capture keeps its
-		 * existing bounded retry budget.
+		 * Only an explicit panic completion requests a snapshot. Sleep
+		 * until it arrives; the stop path completes the wake before
+		 * kthread_stop(). A failed capture keeps its bounded retry
+		 * budget.
 		 */
-		if (!RAMOOPS_PERIODIC_SNAPSHOTS && !s->failures) {
+		if (!s->failures) {
 			ret = wait_for_completion_interruptible(&s->wake);
 			if (ret || kthread_should_stop())
 				continue;
 		}
-
-		/*
-		 * With periodic sampling the sample follows the logdump
-		 * partition as soon as it is there: the boot that has to be
-		 * caught can die before the first tick, and the sample that
-		 * matters is the one that holds the console log up to that
-		 * point.
-		 */
 
 		ret = ramoops_snap_take(s);
 		if (ret) {
@@ -1199,41 +1163,6 @@ static int ramoops_snap_thread(void *unused)
 				RAMOOPS_SNAP_VERSION, s->tail_buf ? "on" : "off",
 				RAMOOPS_TAIL_OFFSET);
 			complete_all(&ramoops_snapshot_ready);
-		}
-		/*
-		 * Every tenth snapshot was ~1260 lines per boot, which is
-		 * spam rather than evidence. Every hundredth keeps the
-		 * liveness witness this port relies on, at about one line
-		 * per boot.
-		 */
-		if (RAMOOPS_PERIODIC_SNAPSHOTS && ramoops_reset_capture &&
-		    !(s->seq % 100))
-			pr_info("DIAG: snapshot heartbeat seq=%llu uptime_ns=%llu\n",
-				s->seq, ktime_get_ns());
-		/*
-		 * run225/226: this tree builds no watchdog driver, so a
-		 * firmware-armed APPS WDT would bite unseen. Re-read the
-		 * block on every fast-cadence tick to catch it arming.
-		 *
-		 * run225 gated this on !(seq % 8) to limit printk volume,
-		 * but seq only reached 21 before the reset, so the re-reads
-		 * that did fire landed at seq 8 and 16 -- before the fast
-		 * cadence was even enabled at the first KGSL stage record,
-		 * i.e. exactly when the read is not interesting. Each read
-		 * is a handful of MMIO reads and is non-blocking, so run226
-		 * samples it on every fast tick instead.
-		 */
-		if (RAMOOPS_PERIODIC_SNAPSHOTS) {
-			bool fast;
-
-			/* Pairs with the stage writer's release of the fast flag. */
-			fast = smp_load_acquire(&ramoops_snap_fast);
-			if (fast)
-				ramoops_debug_apps_wdt();
-			timeout = msecs_to_jiffies(fast ? RAMOOPS_SNAP_FAST_MS :
-						RAMOOPS_SNAP_INTERVAL_MS);
-			wait_for_completion_interruptible_timeout(&s->wake,
-								  timeout);
 		}
 	}
 	return 0;
@@ -1442,26 +1371,6 @@ int ramoops_stage_write(unsigned int slot, const void *data, size_t len)
 	queue_work(ramoops_stage_wq, &ramoops_stage_work);
 out:
 	spin_unlock_irqrestore(&ramoops_stage_lock, flags);
-
-	/*
-	 * run225: stage records only come from the GPU bring-up path, so the
-	 * first one marks "KGSL is up". Switch the snapshotter to the fast
-	 * cadence and cut short the wait that is already in progress, so the
-	 * sample immediately after the GPU start is taken at once.
-	 */
-	if (RAMOOPS_PERIODIC_SNAPSHOTS) {
-		bool fast;
-
-		/* Match the release below before enabling the fast cadence. */
-		fast = smp_load_acquire(&ramoops_snap_fast);
-		if (!fast) {
-			/* Publish the fast cadence before waking the snapshotter. */
-			smp_store_release(&ramoops_snap_fast, true);
-			pr_info("DIAG: snapshot cadence -> %u ms (stage activity)\n",
-				RAMOOPS_SNAP_FAST_MS);
-			complete(&ramoops_snapper.wake);
-		}
-	}
 
 	return err;
 }
@@ -1869,74 +1778,6 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 	return 0;
 }
 
-/* DEBUG run115: silent resets are traceless and now proven independent
- * of any MDSS/display path (runs 110/114). Stock 4.19 pets the APPS WDT
- * from its msm_watchdog thread; this tree builds no watchdog driver at
- * all, so a firmware-armed WDT would bark unheard and bite silently.
- * Snapshot the KPSS WDT block (stock: b017000.qcom,wdt) at probe time.
- * Pure reads; no side effects.
- */
-#define TISSOT_APPS_WDT_BASE	0xb017000
-#define TISSOT_APPS_WDT_EN	0x40
-#define TISSOT_APPS_WDT_STS	0x44
-#define TISSOT_APPS_WDT_BARK	0x4c
-#define TISSOT_APPS_WDT_BITE	0x5c
-
-static u32 ramoops_apps_wdt_last[4];
-static void ramoops_debug_apps_wdt(void)
-{
-	void __iomem *wdt;
-	u32 en, sts, bark, bite;
-	u32 en2, sts2, bark2, bite2;
-	static unsigned int calls;
-
-	/*
-	 * run266: this runs from the panic and reset paths and from the
-	 * periodic snapshot, and it printed 3070 times in one boot - two
-	 * lines per call - which is a quarter of the console the kgsl
-	 * evidence needs. The registers do not change between calls
-	 * (en/sts/bark/bite are stable in every run266 sample), so print the
-	 * first few calls and then only when the values change.
-	 */
-	wdt = ioremap(TISSOT_APPS_WDT_BASE, SZ_4K);
-	if (!wdt) {
-		pr_info("DIAG apps_wdt ioremap failed\n");
-		return;
-	}
-	en = readl_relaxed(wdt + TISSOT_APPS_WDT_EN);
-	sts = readl_relaxed(wdt + TISSOT_APPS_WDT_STS);
-	bark = readl_relaxed(wdt + TISSOT_APPS_WDT_BARK);
-	bite = readl_relaxed(wdt + TISSOT_APPS_WDT_BITE);
-	/* Same block, APCS-timer layout (used by newer low-tier APSS
-	 * WDTs): disambiguates "disabled" from "wrong offsets".
-	 */
-	en2 = readl_relaxed(wdt + 0x8);
-	sts2 = readl_relaxed(wdt + 0xc);
-	bark2 = readl_relaxed(wdt + 0x10);
-	bite2 = readl_relaxed(wdt + 0x14);
-	iounmap(wdt);
-
-	if (calls < 8) {
-		calls++;
-		pr_info("DIAG apps_wdt en=%08x sts=%08x bark=%08x bite=%08x\n",
-			en, sts, bark, bite);
-		pr_info("DIAG apps_wdt2 en=%08x sts=%08x bark=%08x bite=%08x\n",
-			en2, sts2, bark2, bite2);
-		return;
-	}
-
-	/* After that, only when something actually moved. */
-	if (en != ramoops_apps_wdt_last[0] || sts != ramoops_apps_wdt_last[1] ||
-	    bark != ramoops_apps_wdt_last[2] || bite != ramoops_apps_wdt_last[3]) {
-		ramoops_apps_wdt_last[0] = en;
-		ramoops_apps_wdt_last[1] = sts;
-		ramoops_apps_wdt_last[2] = bark;
-		ramoops_apps_wdt_last[3] = bite;
-		pr_info("DIAG apps_wdt changed en=%08x sts=%08x bark=%08x bite=%08x\n",
-			en, sts, bark, bite);
-	}
-}
-
 static void __iomem *ramoops_diag_map(void)
 {
 	struct page *page;
@@ -1967,47 +1808,14 @@ static void __iomem *ramoops_diag_map(void)
 	return ramoops_diag_marks;
 }
 
-void ramoops_diag_mark(loff_t slot, u32 tag, u32 val)
-{
-	void __iomem *pos;
-	u32 check_tag, check_val;
-
-	if (slot < 0 || slot + 8 > RAMOOPS_DIAG_MARK_HDR) {
-		pr_err("ramoops: diag mark slot out of range (%llx)\n", slot);
-		return;
-	}
-	if (!ramoops_diag_map()) {
-		pr_err("ramoops: diag mark unmapped (slot %llx)\n", slot);
-		return;
-	}
-	/* Device-memory writes complete on the bus in order; the readback
-	 * proves the pair reached the reserved region. Disjoint 8-byte
-	 * slots need no locking (idempotent rewrites are harmless).
-	 */
-	pos = ramoops_diag_marks + slot;
-	writel_relaxed(tag, pos);
-	writel_relaxed(val, pos + 4);
-	check_tag = readl_relaxed(pos);
-	check_val = readl_relaxed(pos + 4);
-	if (check_tag != tag || check_val != val)
-		pr_err("ramoops: diag mark readback slot %llx got %08x/%08x want %08x/%08x\n",
-		       slot, check_tag, check_val, tag, val);
-}
-EXPORT_SYMBOL_GPL(ramoops_diag_mark);
-
-/* Dump the previous boot's marks before this boot writes its own, then
- * reset the page. Only a page carrying the mark magic is trusted: after
- * a silent reset the phone boots stock 4.19, which does not reserve
- * this range, so the next port boot usually finds stock's leftovers.
- * The reliable read path is the logdump snapshot, which copies this
- * page every RAMOOPS_SNAP_INTERVAL_MS; the boot id ties those copies
- * to this boot's log.
+/*
+ * Save the previous boot's page for the reset capture, then reset it and
+ * stamp this boot's id.
  */
 static void ramoops_diag_dump_prev(void)
 {
 	void __iomem *page = ramoops_diag_map();
-	u32 magic, boot_id;
-	loff_t slot;
+	u32 boot_id;
 
 	if (!page) {
 		pr_err("ramoops: diag mark page unmapped\n");
@@ -2018,22 +1826,6 @@ static void ramoops_diag_dump_prev(void)
 		memcpy_fromio(ramoops_reset_previous, page,
 			      sizeof(ramoops_reset_previous));
 #endif
-	magic = readl_relaxed(page + RAMOOPS_DIAG_MARK_HDR);
-	boot_id = readl_relaxed(page + RAMOOPS_DIAG_MARK_HDR + 4);
-	if (magic != RAMOOPS_DIAG_MARK_MAGIC) {
-		pr_info("DIAG mark prev none (magic %08x)\n", magic);
-	} else {
-		pr_info("DIAG mark prev boot_id %08x\n", boot_id);
-		for (slot = 0; slot < RAMOOPS_DIAG_MARK_HDR; slot += 8) {
-			u32 tag = readl_relaxed(page + slot);
-			u32 val = readl_relaxed(page + slot + 4);
-
-			if (tag || val)
-				pr_info("DIAG mark prev slot %02llx tag %08x val %08x\n",
-					slot, tag, val);
-		}
-	}
-
 	boot_id = get_random_u32();
 	memset_io(page, 0, RAMOOPS_DIAG_MARK_HDR);
 	writel_relaxed(boot_id, page + RAMOOPS_DIAG_MARK_HDR + 4);
@@ -2042,61 +1834,6 @@ static void ramoops_diag_dump_prev(void)
 	ramoops_reset_seen = 0;
 #endif
 	pr_info("DIAG mark boot_id %08x\n", boot_id);
-}
-
-/*
- * DEBUG run120 (tissot): inspect the boot CPU clock registers. CPU clock
- * handoff is owned by apcc-msm8953, not this diagnostic reader.
- * Layout from stock 4.19 clock-cpu-8953.c / msm8953.dtsi:975:
- * one APCS HF PLL (rate = 19.2 MHz * L), and per-cluster RCG muxes
- * whose CFG (CMD_RCGR + 4) holds SRC_SEL[10:8] and a half-integer
- * divider DIV[4:0] (divide by (DIV + 1) / 2). Stock selects SRC 5
- * (PLL early) for both clusters and CCI. Reads only.
- */
-static void ramoops_debug_cpuclk(void)
-{
-	static const struct {
-		const char *name;
-		phys_addr_t rcgr;
-	} mux[] = {
-		{ "c0", 0xb111050 },	/* little cluster, CPU0-3 */
-		{ "c1", 0xb011050 },	/* big cluster, CPU4-7 */
-		{ "cci", 0xb1d1050 },
-	};
-	void __iomem *pll, *rcg;
-	u32 mode, l_val, user, cmd, cfg, src, div;
-	unsigned long pll_khz;
-	int i;
-
-	pll = ioremap(0xb116000, SZ_4K);
-	if (!pll) {
-		pr_info("DIAG cpuclk pll ioremap failed\n");
-		return;
-	}
-	mode = readl_relaxed(pll + 0x0);
-	l_val = readl_relaxed(pll + 0x8);
-	user = readl_relaxed(pll + 0x18);
-	iounmap(pll);
-	pll_khz = 19200UL * l_val;
-	pr_info("DIAG cpuclk pll mode=%08x lock=%u l=%u user=%08x rate=%lu kHz\n",
-		mode, !!(mode & BIT(31)), l_val, user, pll_khz);
-
-	for (i = 0; i < ARRAY_SIZE(mux); i++) {
-		rcg = ioremap(mux[i].rcgr & ~(phys_addr_t)0xfff, SZ_4K);
-		if (!rcg) {
-			pr_info("DIAG cpuclk %s ioremap failed\n", mux[i].name);
-			continue;
-		}
-		cmd = readl_relaxed(rcg + (mux[i].rcgr & 0xfff));
-		cfg = readl_relaxed(rcg + (mux[i].rcgr & 0xfff) + 4);
-		iounmap(rcg);
-		src = (cfg >> 8) & 0x7;
-		div = cfg & 0x1f;
-		pr_info("DIAG cpuclk %s cmd=%08x cfg=%08x src=%u div=%u rate=%lu kHz%s\n",
-			mux[i].name, cmd, cfg, src, div,
-			src == 5 ? pll_khz * 2 / (div + 1) : 0,
-			src == 5 ? "" : " (src not PLL: rate unknown)");
-	}
 }
 
 static int ramoops_probe(struct platform_device *pdev)
@@ -2117,9 +1854,6 @@ static int ramoops_probe(struct platform_device *pdev)
 		pr_err("already initialized\n");
 		goto fail_out;
 	}
-
-	ramoops_debug_apps_wdt();
-	ramoops_debug_cpuclk();
 
 	if (dev_of_node(dev) && !pdata) {
 		pdata = &pdata_local;

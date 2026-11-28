@@ -1440,175 +1440,9 @@ static void guard_displaygate(int proc, int log)
 #endif
 
 /*
- * GPU firmware staging. Upstream adreno requests qcom/a530_pm4.fw,
- * filesystem firmware loader, which this early only searches the ramdisk
- * (/lib/firmware); the blobs live on /vendor/firmware, unreadable to
- * shell/adb. This process is root in PID 1's mount namespace after vendor
- * is up, so copy them into the ramdisk before the deferred GPU probe runs.
- * Missing files are logged, never fatal.
- */
-static int stage_firmware_file(const char *src, const char *dest, long *bytes)
-{
-	char buf[8192];
-	int in, out, error = 0;
-	ssize_t n;
-
-	*bytes = 0;
-	in = open(src, O_RDONLY | O_CLOEXEC);
-	if (in < 0)
-		return errno;
-	out = open(dest, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0444);
-	if (out < 0) {
-		error = errno;
-		close(in);
-		return error;
-	}
-	for (;;) {
-		n = read(in, buf, sizeof(buf));
-		if (n < 0 && errno == EINTR)
-			continue;
-		if (n < 0) {
-			error = errno;
-			break;
-		}
-		if (!n)
-			break;
-		if (write_all(out, buf, (size_t)n)) {
-			error = errno;
-			break;
-		}
-		*bytes += n;
-	}
-	close(in);
-	if (close(out) && !error)
-		error = errno;
-	return error;
-}
-
-static const char b64digits[] =
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static void exfil_blob(const char *src, const char *base, int log)
-{
-	static char data[128 * 1024];
-	char message[256], chunk[200];
-	struct stat st;
-	int in = open(src, O_RDONLY | O_CLOEXEC);
-	off_t offset = 0;
-	ssize_t n;
-	size_t total, seq = 0, at = 0;
-
-	if (in < 0) {
-		snprintf(message, sizeof(message), "DIAG: fwblob %s open errno=%d\n",
-			 base, errno);
-		say(log, message);
-		return;
-	}
-	if (fstat(in, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
-	    st.st_size > (off_t)sizeof(data)) {
-		snprintf(message, sizeof(message), "DIAG: fwblob %s stat errno=%d\n",
-			 base, errno);
-		say(log, message);
-		close(in);
-		return;
-	}
-	while (offset < st.st_size) {
-		n = pread(in, data + offset,
-			  (size_t)(st.st_size - offset), offset);
-		if (n < 0 && errno == EINTR)
-			continue;
-		if (n <= 0)
-			break;
-		offset += n;
-	}
-	close(in);
-	total = (size_t)offset;
-	while (at < total) {
-		size_t step = total - at > 144 ? 144 : total - at;
-		size_t groups = step / 3, rem = step % 3, i, o = 0;
-
-		for (i = 0; i < groups * 3; i += 3) {
-			unsigned triple = ((unsigned char)data[at + i] << 16) |
-				((unsigned char)data[at + i + 1] << 8) |
-				(unsigned char)data[at + i + 2];
-
-			chunk[o++] = b64digits[(triple >> 18) & 63];
-			chunk[o++] = b64digits[(triple >> 12) & 63];
-			chunk[o++] = b64digits[(triple >> 6) & 63];
-			chunk[o++] = b64digits[triple & 63];
-		}
-		if (rem) {
-			unsigned triple = (unsigned char)data[at + groups * 3] << 16;
-
-			if (rem == 2)
-				triple |= (unsigned char)data[at + groups * 3 + 1] << 8;
-			chunk[o++] = b64digits[(triple >> 18) & 63];
-			chunk[o++] = b64digits[(triple >> 12) & 63];
-			chunk[o++] = rem == 2 ? b64digits[(triple >> 6) & 63] : '=';
-			chunk[o++] = '=';
-		}
-		chunk[o] = '\0';
-		snprintf(message, sizeof(message), "DIAG: fwblob %s %zu %s\n",
-			 base, seq++, chunk);
-		say(log, message);
-		at += step;
-	}
-}
-
-static void guard_firmware(int log)
-{
-	static const char *const dests[] = {
-		"/lib/firmware/qcom/a530_pm4.fw",
-		"/lib/firmware/qcom/a530_pfp.fw",
-		"/lib/firmware/a506_zap.mdt",
-		"/lib/firmware/a506_zap.b00",
-		"/lib/firmware/a506_zap.b01",
-		"/lib/firmware/a506_zap.b02",
-	};
-	static const char *const bases[] = {
-		"a530_pm4.fw",
-		"a530_pfp.fw",
-		"a506_zap.mdt",
-		"a506_zap.b00",
-		"a506_zap.b01",
-		"a506_zap.b02",
-	};
-	char message[256], src[128], exfil[128];
-	size_t i;
-
-	make_dir("/lib");
-	make_dir("/lib/firmware");
-	make_dir("/lib/firmware/qcom");
-	make_dir("/dev/fw-exfil");
-	for (i = 0; i < sizeof(dests) / sizeof(dests[0]); i++) {
-		int error, xerror;
-		long bytes = 0, xbytes = 0;
-
-		snprintf(src, sizeof(src), "/vendor/firmware/%s", bases[i]);
-		if (access(src, R_OK) &&
-		    snprintf(src, sizeof(src), "/vendor/firmware/qcom/%s",
-			     bases[i]) < 0)
-			src[0] = '\0';
-		error = *src ? stage_firmware_file(src, dests[i], &bytes) :
-			ENOENT;
-		snprintf(exfil, sizeof(exfil), "/dev/fw-exfil/%s", bases[i]);
-		xerror = *src ? stage_firmware_file(src, exfil, &xbytes) :
-			ENOENT;
-		snprintf(message, sizeof(message),
-			 "DIAG: firmware %s bytes=%ld errno=%d\n",
-			 dests[i], bytes, error);
-		say(log, message);
-		snprintf(message, sizeof(message), "DIAG: exfil %s bytes=%ld errno=%d\n",
-			 exfil, xbytes, xerror);
-		say(log, message);
-		if (*src)
-			exfil_blob(src, bases[i], log);
-	}
-}
-/*
- * Wait for the modem partition, retain the working GPU firmware search
- * directories, and start the autoboot-disabled MSS. Leave the already
- * running ADSP and WCNSS alone. Detached fork, never blocks the guard or boot.
+ * Start the autoboot-disabled MSS once its firmware and the remote storage
+ * service are up. Leave the already running ADSP and WCNSS alone. Detached
+ * fork, never blocks the guard or boot.
  */
 static int read_file(const char *path, char *buf, size_t len)
 {
@@ -1705,111 +1539,90 @@ static void start_remoteproc(const char *match, int log)
 	closedir(rp);
 }
 
-static void harvest_modem_child(int log)
+static int rmt_storage_ready(int fd, time_t deadline)
+{
+	static const char ready[] =
+		"rmt_storage:INFO:main: Done with init now waiting for messages!\n";
+	char buf[8192];
+
+	while (monotonic_seconds() < deadline) {
+		ssize_t n = read(fd, buf, sizeof(buf) - 1);
+		const char *message;
+
+		if (n < 0 && (errno == EPIPE || errno == EINTR))
+			continue;
+		if (n <= 0)
+			return n < 0 && errno == EAGAIN ? 0 : -1;
+		buf[n] = '\0';
+		message = strchr(buf, ';');
+		if (message && !strncmp(message + 1, ready, sizeof(ready) - 1))
+			return 1;
+	}
+	return 0;
+}
+
+/*
+ * The MSS driver leaves auto_boot off because the modem must not boot
+ * before the remote storage service can answer it, and expects userspace
+ * to start it once that service is up. On this ROM that service is the
+ * vendor rmt_storage daemon. The firmware search path already lists
+ * /vendor/firmware_mnt/image on the command line; it is not rewritten here,
+ * so the other directories it lists stay searchable.
+ */
+static void harvest_modem_child(int log, int kmsg)
 {
 	time_t deadline = monotonic_seconds() + 240;
-	char message[512];
-	int pathset = 0;
-	int patherr = 0;
-	/*
-	 * Whole-partition harvest first: needs no mounts (devtmpfs block
-	 * nodes exist from boot) and sidesteps all file-level DAC issues.
-	 * Shell cannot read mmcblk0p1 (brw------- root); this root child
-	 * can. /sdlog is vfat and host-readable; adb pull is a fallback.
-	 */
-	{
-		long bytes = 0;
-		int error = 0;
+	int mounted = 0, ready = 0;
 
-		/* /sdlog must be the card, not ramdisk: refuse unless the
-		 * mirror log the SD setup creates is already there.
-		 */
-		if (!mounts_contain("/sdlog")) {
-			snprintf(message, sizeof(message),
-				 "DIAG: fwlate partition skipped: no sdlog mount\n");
-			say(log, message);
-		} else {
-			make_dir("/sdlog/fwpart");
-			error = stage_firmware_file("/dev/block/mmcblk0p1",
-						    "/sdlog/fwpart/modem_a.img",
-						    &bytes);
+	say(log, "DIAG: fwlate: waiting for modem mount and rmt_storage\n");
+	while (monotonic_seconds() < deadline) {
+		if (!mounted && mounts_contain("firmware_mnt")) {
+			time_t fallback = monotonic_seconds() + 30;
+
+			mounted = 1;
+			if (fallback < deadline)
+				deadline = fallback;
 		}
-		snprintf(message, sizeof(message),
-			 "DIAG: fwlate partition mmcblk0p1 bytes=%ld errno=%d\n",
-			 bytes, error);
-		say(log, message);
-	}
+		if (kmsg >= 0 && !ready) {
+			/* A short slice keeps the mount check running under a log flood. */
+			int status = rmt_storage_ready(kmsg, monotonic_seconds() + 1);
 
-	say(log, "DIAG: fwlate: waiting for modem mount\n");
-	for (;;) {
-		if (mounts_contain("firmware_mnt"))
+			if (status != 0) {
+				close(kmsg);
+				kmsg = -1;
+				ready = status > 0;
+			}
+		}
+		if (mounted && ready)
 			break;
-		if (monotonic_seconds() >= deadline) {
-			say(log, "DIAG: fwlate: modem never mounted\n");
-			_exit(0);
-		}
-		sleep(2);
+		sleep(1);
 	}
-	/*
-	 * The diag init still runs in the kernel domain here: the Android
-	 * init exec (and the transition to init) happens after this child is
-	 * forked.  The kernel domain may be denied the generic sysfs write,
-	 * and the boot command line already carries the image path, so treat
-	 * an already-correct path as success.  Log uid/euid/context and the
-	 * exact errno: run336 showed EACCES even though a root su shell can
-	 * rewrite the same file.
-	 */
-	{
-		char current[256] = "";
-		char context[64] = "";
-
-		if (read_file("/proc/self/attr/current", context, sizeof(context)))
-			context[0] = '\0';
-		context[strcspn(context, "\r\n")] = '\0';
-		if (attribute("/sys/module/firmware_class/parameters/path",
-			       "/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image"))
-			patherr = errno;
-		if (read_file("/sys/module/firmware_class/parameters/path",
-			      current, sizeof(current)))
-			current[0] = '\0';
-		current[strcspn(current, "\r\n")] = '\0';
-		pathset = !patherr;
-		if (!pathset && !strcmp(current,
-			"/lib/firmware,/vendor/firmware,/vendor/firmware_mnt/image"))
-			pathset = 2;
-		snprintf(message, sizeof(message),
-			 "DIAG: fwlate: custom path set=%d errno=%d uid=%d euid=%d ctx=%s path=%s\n",
-			 pathset, patherr, (int)getuid(), (int)geteuid(),
-			 context[0] ? context : "?", current[0] ? current : "?");
-		say(log, message);
-	}
-	if (!pathset)
+	if (kmsg >= 0)
+		close(kmsg);
+	if (!mounted) {
+		say(log, "DIAG: fwlate: modem never mounted\n");
 		_exit(0);
-	sleep(2);
-	/*
-	 * adsp and wcnss are already up: the boot loaded adsp.mdt and
-	 * wcnss.mdt.  Rebinding them here unbound them and then failed to
-	 * bind again because the device/driver symlink disappears with the
-	 * unbind.  Only the
-	 * MSS is autoboot-disabled in this port.
-	 */
+	}
+	/* shortcut: vendor log text may change; use the mount if it goes missing. */
+	if (!ready)
+		say(log, "DIAG: fwlate: no rmt_storage ready message, using modem mount\n");
 	start_remoteproc("mba", log);
 	say(log, "DIAG: fwlate done\n");
 	_exit(0);
 }
 
-static void harvest_modem_firmware(int log)
+static void harvest_modem_firmware(int log, int kmsg)
 {
 	pid_t pid = fork();
 
-	if (pid < 0) {
-		say(log, "DIAG: modem harvest: fork failed\n");
-		return;
-	}
 	if (!pid) {
 		setsid();
-		harvest_modem_child(log);
+		harvest_modem_child(log, kmsg);
 	}
+	if (kmsg >= 0)
+		close(kmsg);
+	if (pid < 0)
+		say(log, "DIAG: modem harvest: fork failed\n");
 }
 
 /*
@@ -2064,67 +1877,6 @@ static void relabel_sysfs_for_rom_policy(int log)
 	}
 }
 
-/*
- * Downstream adsprpcd opens /dev/adsprpc-smd, but upstream FastRPC
- * registers /dev/fastrpc-adsp (misc). Same device, different name:
- * wait for the upstream node, then mknod the downstream alias with
- * identical numbers (mode 0666 for the daemon). Detached fork.
- */
-static void adsprpc_compat_child(int log)
-{
-	time_t deadline = monotonic_seconds() + 240;
-	char message[256], dev[32];
-	unsigned int maj, min;
-	ssize_t n;
-	say(log, "DIAG: adsprpc compat: waiting for fastrpc-adsp\n");
-	for (;;) {
-		if (!read_file("/sys/class/misc/fastrpc-adsp/dev", dev,
-			       sizeof(dev)) &&
-		    sscanf(dev, "%u:%u", &maj, &min) == 2)
-			break;
-		if (monotonic_seconds() >= deadline) {
-			say(log, "DIAG: adsprpc compat: fastrpc-adsp never appeared\n");
-			_exit(0);
-		}
-		sleep(2);
-	}
-	if (mknod("/dev/adsprpc-smd", 0600 | S_IFCHR, makedev(maj, min)) &&
-	    errno != EEXIST) {
-		snprintf(message, sizeof(message),
-			 "DIAG: adsprpc compat: mknod errno=%d\n", errno);
-		say(log, message);
-		_exit(0);
-	}
-	/* Stock identity (read off live stock): 0664 system:system
-	 * u:object_r:qdsp_device:s0. Without the label the daemon gets
-	 * avc denied on the tmpfs default context.
-	 */
-	chmod("/dev/adsprpc-smd", 0664);
-	if (chown("/dev/adsprpc-smd", 1000, 1000))
-		say(log, "DIAG: adsprpc compat: chown failed\n");
-	n = setxattr("/dev/adsprpc-smd", "security.selinux",
-		     "u:object_r:qdsp_device:s0",
-		     sizeof("u:object_r:qdsp_device:s0") - 1, 0);
-	snprintf(message, sizeof(message),
-		 "DIAG: adsprpc compat: alias %u:%u label ret=%d errno=%d\n",
-		 maj, min, (int)n, n ? errno : 0);
-	say(log, message);
-	_exit(0);
-}
-
-static void adsprpc_compat_fork(int log)
-{
-	pid_t pid = fork();
-
-	if (pid < 0) {
-		say(log, "DIAG: adsprpc compat: fork failed\n");
-		return;
-	}
-	if (!pid) {
-		setsid();
-		adsprpc_compat_child(log);
-	}
-}
 /*
  * Debuggable props. Our /init replaced first-stage init, so the ramdisk
  * prop.default is never loaded; second-stage init takes ro.secure=1 /
@@ -2557,8 +2309,8 @@ static int guard_bootdevice(int proc)
 	} else if (errno != ENOENT) {
 		return -1;
 	}
-	/* With bootdevice=../.. the stock vendor wait resolves through soc.
-	 * Do not release that wait until both read-only overlays are verified. */
+	/* The stock vendor wait resolves through platform/soc. Do not release
+	 * that wait until both read-only overlays are verified. */
 	if (make_dir("/dev/block/platform/soc") ||
 	    stat("/dev/block/platform/soc", &st))
 		return -1;
@@ -2577,10 +2329,17 @@ static int guard_bootdevice(int proc)
 		errno = error;
 		return -1;
 	}
+	/*
+	 * The vendor fs trigger waits for platform/soc/${ro.boot.bootdevice},
+	 * the 4.19 path. Point it at the controller so the wait returns at
+	 * once instead of timing out. A failure here only costs that timeout.
+	 */
+	(void)symlink(BOOT_CONTROLLER, "/dev/block/platform/soc/7824900.sdhci");
 	return 0;
 }
 
-static void install_android_guard(int proc, int fstab, int contexts, int log)
+static void install_android_guard(int proc, int fstab, int contexts, int log,
+				  int kmsg)
 {
 	time_t deadline = monotonic_seconds() + 60;
 	int ns = -1, root = -1;
@@ -2620,6 +2379,8 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 		char c;
 
 		close(ready[1]);
+		if (kmsg >= 0)
+			close(kmsg);
 		/* Wait for the guard to be finished with its window. */
 		if (read(ready[0], &c, 1) <= 0) {
 			/* The guard failed; there is nothing to relabel. */
@@ -2729,9 +2490,7 @@ static void install_android_guard(int proc, int fstab, int contexts, int log)
 #ifdef ANDROID_DISPLAY_GATE
 	guard_displaygate(proc, log);
 #endif
-	guard_firmware(log);
-	harvest_modem_firmware(log);
-	adsprpc_compat_fork(log);
+	harvest_modem_firmware(log, kmsg);
 	guard_debuggable(proc, log);
 	/*
 	 * The guard's window is closed: the fstab and the vendor
@@ -3433,15 +3192,20 @@ static int launch_android(char **argv)
 		fstab = open("/ack-protected-fstab.qcom", O_RDONLY | O_CLOEXEC);
 		contexts = open("/ack-vendor-file-contexts", O_RDONLY | O_CLOEXEC);
 		if (proc >= 0 && fstab >= 0 && contexts >= 0) {
+			/* The guard changes root before it forks the modem child. */
+			int kmsg = open("/dev/kmsg", O_RDONLY | O_NONBLOCK);
 			pid_t guard = fork();
+
 			if (guard == 0) {
 				close(ready[1]);
 				close(in);
 				close(out);
 				if (kin >= 0)
 					close(kin);
-				install_android_guard(proc, fstab, contexts, klog);
+				install_android_guard(proc, fstab, contexts, klog, kmsg);
 			}
+			if (kmsg >= 0)
+				close(kmsg);
 			if (guard < 0)
 				say(klog, "DIAG: bootdevice guard fork failed; alias not released\n");
 		} else {
